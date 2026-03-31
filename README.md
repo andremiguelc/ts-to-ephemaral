@@ -9,7 +9,7 @@ The parser reads a TypeScript function declaration and produces a structured JSO
 ```bash
 git clone https://github.com/andremiguelc/ts-to-ephemaral.git
 cd ts-to-ephemaral
-npm install
+pnpm install
 ```
 
 ## Usage
@@ -21,13 +21,13 @@ npx tsx src/index.ts path/to/function.ts
 Output goes to stdout as JSON. Pipe it to a file:
 
 ```bash
-npx tsx src/index.ts withdraw.ts > withdraw.aral-fn.json
+npx tsx src/index.ts myFunction.ts > .ephemaral/parsed/myFunction.aral-fn.json
 ```
 
 Then verify with ephemaral:
 
 ```bash
-ephemaral withdraw.aral-fn.json account.aral
+.ephemaral/bin/ephemaral .ephemaral/parsed/myFunction.aral-fn.json .ephemaral/rules/myType.aral
 ```
 
 ## One function per file
@@ -39,10 +39,9 @@ The parser expects exactly one function declaration per source file. In real cod
 Functions must take and return the same type, using spread-and-override to update fields:
 
 ```typescript
-function withdrawGuarded(account: Account, amount: number): Account {
-  if (amount <= 0) return account;
-  if (amount > account.balance) return account;
-  return { ...account, balance: account.balance - amount };
+function updateRecord(input: MyType, value: number): MyType {
+  if (value <= 0) return input;
+  return { ...input, field: input.field - value };
 }
 ```
 
