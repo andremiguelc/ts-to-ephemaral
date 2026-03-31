@@ -1,0 +1,17 @@
+{
+  "name": "ts-to-ephemaral",
+  "version": "0.1.0",
+  "description": "Parse TypeScript functions into Aral-fn JSON for ephemaral verification",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "bin": {
+    "ts-to-ephemaral": "src/index.ts"
+  },
+  "scripts": {
+    "parse": "npx tsx src/index.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0"
+  }
+}
