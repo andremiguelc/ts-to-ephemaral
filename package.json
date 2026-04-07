@@ -8,10 +8,14 @@
   "bin": {
     "ts-to-ephemaral": "src/index.ts"
   },
+  "aralFnVersion": "0.1.1",
   "scripts": {
-    "parse": "npx tsx src/index.ts"
+    "extract": "npx tsx src/extract.ts"
   },
   "devDependencies": {
     "tsx": "^4.0.0"
+  },
+  "dependencies": {
+    "typescript": "5.9.3"
   }
 }
