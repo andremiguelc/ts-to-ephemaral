@@ -136,9 +136,10 @@ for (const [fieldName, fieldSites] of sitesByField) {
     // If there are known collection names referenced, add collection metadata
     // (This would need to be extended for full collection support)
 
-    // Write the JSON file — use enough path to avoid collisions across packages
+    // Write the JSON file — hash full path + line for stable unique names
     const shortFile = makeShortPath(site.filePath);
-    const jsonName = `${shortFile}-${site.containerName}-${fieldName}.aral-fn.json`;
+    const hash = hashId(`${site.filePath}:${site.line}:${fieldName}`);
+    const jsonName = `${shortFile}-${hash}-${fieldName}.aral-fn.json`;
     const jsonPath = join(outputBase, jsonName);
     writeFileSync(jsonPath, JSON.stringify(aralFn, null, 2) + "\n");
     outputs.push(jsonPath);
@@ -177,6 +178,16 @@ import ts from "typescript";
  * For "packages/app-store/stripepayment/lib/PaymentService.ts" → "stripepayment-PaymentService"
  * Uses the last non-"lib"/"src" directory + filename.
  */
+/** 8-char hex hash of a string (FNV-1a, no crypto dep needed) */
+function hashId(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = (h * 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
 function makeShortPath(filePath: string): string {
   const parts = filePath.replace(/\.tsx?$/, "").split("/");
   const fileName = parts[parts.length - 1];
