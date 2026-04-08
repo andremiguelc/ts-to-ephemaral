@@ -30,7 +30,8 @@ export type BoolExpr =
   | { cmp: { op: CompOp; left: Expr; right: Expr } }
   | { logic: { op: LogicOp; left: BoolExpr; right: BoolExpr } }
   | { not: BoolExpr }
-  | { isPresent: FieldRef };
+  | { isPresent: FieldRef }
+  | { each: { collection: string; body: BoolExpr } };
 
 export interface FieldAssign {
   fieldName: string;
