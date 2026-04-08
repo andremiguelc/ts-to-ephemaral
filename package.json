@@ -10,7 +10,8 @@
   },
   "aralFnVersion": "0.1.1",
   "scripts": {
-    "extract": "npx tsx src/extract.ts"
+    "extract": "npx tsx src/extract.ts",
+    "test": "npx tsx --test tests/extract.test.ts"
   },
   "devDependencies": {
     "tsx": "^4.0.0"
