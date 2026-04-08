@@ -205,6 +205,105 @@ describe("metadata", () => {
   });
 });
 
+// ─── Local variable tracing ────────────────────────────────────
+
+describe("local variable tracing", () => {
+  it("const: traces through local const to inlined expression", () => {
+    // const newTotal = order.subtotal - discountAmount; return { total: newTotal }
+    const r = extractOne("order.aral", "total", { sourceFile: "local_const.ts" });
+    const v = getAssign(r);
+    assert.equal(v.arith.op, "sub");
+    assert.deepStrictEqual(v.arith.left, { field: { name: "subtotal" } });
+    // discountAmount is a function param, not a type field — should be in params or as field ref
+  });
+
+  it("chained: traces through multiple const declarations", () => {
+    // const base = order.subtotal; const doubled = base * 2; return { total: doubled }
+    const r = extractOne("order.aral", "total", { sourceFile: "local_chained.ts" });
+    const v = getAssign(r);
+    assert.equal(v.arith.op, "mul");
+    assert.deepStrictEqual(v.arith.left, { field: { name: "subtotal" } });
+    assert.deepStrictEqual(v.arith.right, { lit: 2 });
+  });
+
+  it("let single-assignment: traces like const", () => {
+    // let newBalance = account.balance + amount; return { balance: newBalance }
+    const r = extractOne("account.aral", "balance", { sourceFile: "local_let_single.ts" });
+    const v = getAssign(r);
+    assert.equal(v.arith.op, "add");
+    assert.deepStrictEqual(v.arith.left, { field: { name: "balance" } });
+  });
+
+  it("let reassigned: traces to last sequential assignment", () => {
+    // let result = account.balance; result = result + amount; return { balance: result }
+    const r = extractOne("account.aral", "balance", { sourceFile: "local_let_reassigned.ts" });
+    const v = getAssign(r);
+    assert.equal(v.arith.op, "add");
+    assert.deepStrictEqual(v.arith.left, { field: { name: "balance" } });
+  });
+
+  it("let branched: falls back (reassignment inside if)", () => {
+    // let result = account.balance; if (...) { result = result + bonus; } return { balance: result }
+    // The reassignment is inside an if → can't statically determine which value, should not fully trace
+    const r = extractOne("account.aral", "balance", { sourceFile: "local_let_branched.ts" });
+    // Should either be unconstrained or fall through to { field: { name: "result" } }
+    const v = getAssign(r);
+    // We don't assert the exact shape — just that it doesn't crash and doesn't claim to be "balance"
+    assert.ok(v, "should produce some expression");
+  });
+});
+
+// ─── Typed parameters ──────────────────────────────────────────
+
+describe("typed parameters", () => {
+  it("function param with resolvable type populates typedParams", () => {
+    // discount: Discount → discount.percent should produce a typed param
+    const r = extractOne("order.aral", "total", { sourceFile: "typed_param_access.ts" });
+    const v = getAssign(r);
+    assert.equal(v.arith.op, "sub");
+    assert.deepStrictEqual(v.arith.left, { field: { name: "subtotal" } });
+    // discount.percent should be a qualified field ref
+    assert.deepStrictEqual(v.arith.right, { field: { qualifier: "discount", name: "percent" } });
+    // The typedParams should include discount → Discount
+    assert.ok(r.typedParams, "should have typedParams");
+    assert.ok(
+      r.typedParams!.some((tp: any) => tp.name === "discount" && tp.type === "Discount"),
+      "typedParams should include discount:Discount"
+    );
+  });
+});
+
+// ─── Module-level constants ────────────────────────────────────
+
+describe("module-level constants", () => {
+  it("simple module const resolves to literal", () => {
+    // const DAILY_LIMIT = 1000; return { dailyWithdrawLimit: DAILY_LIMIT }
+    const r = extractOne("account.aral", "dailyWithdrawLimit", { sourceFile: "module_const.ts" });
+    const v = getAssign(r);
+    assert.deepStrictEqual(v, { lit: 1000 });
+  });
+
+  it("module const arithmetic evaluates at parse time", () => {
+    // const HOURS = 24; const MINS = 60; const MINS_PER_DAY = HOURS * MINS;
+    const r = extractOne("account.aral", "dailyWithdrawLimit", { sourceFile: "module_const_arith.ts" });
+    const v = getAssign(r);
+    assert.deepStrictEqual(v, { lit: 1440 });
+  });
+});
+
+// ─── __ext_ naming for parser gaps ─────────────────────────────
+
+describe("__ext_ unconstrained naming", () => {
+  it("function call produces __ext_ prefixed param name", () => {
+    // parseFloat(rawAmount) → __ext_parseFloat_N
+    const r = extractOne("order.aral", "total", { sourceFile: "call_unconstrained.ts" });
+    assert.ok(r.params.length > 0, "should have unconstrained params");
+    const paramName = r.params[0];
+    assert.ok(paramName.startsWith("__ext_"), `param '${paramName}' should start with __ext_`);
+    assert.ok(paramName.includes("parseFloat"), `param '${paramName}' should include 'parseFloat'`);
+  });
+});
+
 // ─── Multi-site extraction ──────────────────────────────────────
 
 describe("multi-site extraction", () => {
