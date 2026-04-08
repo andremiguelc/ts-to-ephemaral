@@ -60,7 +60,7 @@ export function extractAll(aralName: string): ExtractedSite[] {
     );
     knownFields.add(site.fieldName);
 
-    results.push({
+    const result: ExtractedSite = {
       name: `${site.containerName}-${site.fieldName}`,
       inputType: target.typeName,
       inputFields: Array.from(knownFields),
@@ -69,7 +69,16 @@ export function extractAll(aralName: string): ExtractedSite[] {
       filePath: site.filePath,
       line: site.line,
       unconstrainedCount: ctx.unconstrainedParams.size,
-    });
+    };
+
+    // Add typedParams if any were discovered
+    if (ctx.typedParams.size > 0) {
+      result.typedParams = Array.from(ctx.typedParams.entries()).map(
+        ([name, type]) => ({ name, type })
+      );
+    }
+
+    results.push(result);
   }
 
   return results;
