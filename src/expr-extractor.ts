@@ -188,6 +188,15 @@ function extractPropertyAccess(
 ): Expr {
   const fieldName = node.name.text;
 
+  // Reject standalone optional chaining (obj?.field without || 0 or ?? default).
+  // The result could be undefined, which is not a valid numeric expression.
+  // When wrapped in || 0 or ??, the BarBarToken/QuestionQuestionToken handler
+  // calls extractNullCoalescing which adds the isPresent guard.
+  if (node.questionDotToken) {
+    return makeUnconstrained(node, ctx,
+      "optional chaining (?.) without null fallback — wrap in `expr ?? 0` or `expr || 0`");
+  }
+
   // input.field → { field: { name: fieldName } }
   if (ts.isIdentifier(node.expression)) {
     const objName = node.expression.text;
@@ -230,6 +239,16 @@ function extractBinaryExpr(
   // Null coalescing: x ?? default
   if (op === ts.SyntaxKind.QuestionQuestionToken) {
     return extractNullCoalescing(node, ctx);
+  }
+
+  // Logical OR with falsy default: x || 0 → ite(isPresent(x), x, 0)
+  // Common in real-world TS (e.g., Cal.com: `apps?.[id].price || 0`)
+  if (op === ts.SyntaxKind.BarBarToken) {
+    const right = node.right;
+    if (ts.isNumericLiteral(right) && Number(right.text) === 0) {
+      return extractNullCoalescing(node, ctx);
+    }
+    // Non-zero || default — fall through to unconstrained
   }
 
   // Arithmetic

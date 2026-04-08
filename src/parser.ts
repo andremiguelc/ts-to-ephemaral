@@ -489,6 +489,33 @@ function parseFunExpr(tokens: string[], root: string, paramNames: string[] = [])
     }
   }
 
+  // Check for logical OR with falsy default: expr || 0
+  // Lower to ite(isPresent(field), field, 0) — same as ?? for numeric defaults
+  depth = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] === "(") depth++;
+    else if (tokens[i] === ")") depth--;
+    else if (tokens[i] === "||" && depth === 0) {
+      const rightTokens = tokens.slice(i + 1);
+      // Only treat as null-coalescing when right side is literal 0
+      if (rightTokens.length === 1 && rightTokens[0] === "0") {
+        const leftTokens = tokens.slice(0, i);
+        const leftExpr = parseArithExpr(leftTokens, root, paramNames);
+        if ("field" in leftExpr) {
+          return {
+            ite: {
+              cond: { isPresent: leftExpr.field },
+              then: leftExpr,
+              else: { lit: 0 },
+            },
+          };
+        }
+      }
+      // Non-zero default or complex left — fall through to arithmetic
+      break;
+    }
+  }
+
   // Delegate to arithmetic parser with proper precedence
   return parseArithExpr(tokens, root, paramNames);
 }
