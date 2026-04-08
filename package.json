@@ -1,6 +1,6 @@
 {
   "name": "ts-to-ephemaral",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Parse TypeScript functions into Aral-fn JSON for ephemaral verification",
   "license": "Apache-2.0",
   "type": "module",
