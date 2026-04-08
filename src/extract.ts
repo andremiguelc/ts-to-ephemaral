@@ -60,9 +60,14 @@ const aralName = basename(aralPath, ".aral");
 
 // ─── Create TS program ──────────────────────────────────────────
 
-console.log(`ephemaral extract · ${basename(aralPath)} → ${target.typeName}\n`);
-
 const program = createProgramFromConfig(resolve(tsconfigPath));
+
+// Count scanned files (non-declaration, non-node_modules)
+const scannedFiles = program.getSourceFiles().filter(
+  (sf) => !sf.isDeclarationFile && !sf.fileName.includes("node_modules")
+).length;
+
+console.log(`\n  ${target.typeName} (${basename(aralPath)})\n`);
 
 // ─── Find assignment sites ───────────────────────────────────────
 
@@ -70,8 +75,9 @@ const allFields = [...target.fieldNames, ...target.collectionNames];
 const sites = findAssignmentSites(program, target.typeName, allFields);
 
 if (sites.length === 0) {
-  console.log(`  No assignment sites found for ${target.typeName}`);
-  console.log(`\nResults:  0 found`);
+  console.log(`  (no assignment sites found)\n`);
+  console.log(`  0 passed, 0 with gaps`);
+  console.log(`  Scanned ${scannedFiles} files via ${basename(tsconfigPath)}`);
   process.exit(0);
 }
 
@@ -98,7 +104,7 @@ let totalWithGaps = 0;
 const outputs: string[] = [];
 
 for (const [fieldName, fieldSites] of sitesByField) {
-  console.log(`  ${fieldName}`);
+  console.log(`    ${fieldName}`);
 
   for (const site of fieldSites) {
     const ctx = createContext(
@@ -133,10 +139,14 @@ for (const [fieldName, fieldSites] of sitesByField) {
       assigns: [{ fieldName, value: expr }],
     };
 
-    // If there are known collection names referenced, add collection metadata
-    // (This would need to be extended for full collection support)
+    // Add typedParams if any were discovered
+    if (ctx.typedParams.size > 0) {
+      aralFn.typedParams = Array.from(ctx.typedParams.entries()).map(
+        ([name, type]) => ({ name, type })
+      );
+    }
 
-    // Write the JSON file — hash full path + line for stable unique names
+    // Write the JSON file
     const shortFile = makeShortPath(site.filePath);
     const hash = hashId(`${site.filePath}:${site.line}:${fieldName}`);
     const jsonName = `${shortFile}-${hash}-${fieldName}.aral-fn.json`;
@@ -144,30 +154,27 @@ for (const [fieldName, fieldSites] of sitesByField) {
     writeFileSync(jsonPath, JSON.stringify(aralFn, null, 2) + "\n");
     outputs.push(jsonPath);
 
-    // Report
+    // Report — test-runner style
     const hasGaps = ctx.unconstrainedParams.size > 0;
     totalExtracted++;
+    const lineRef = `${shortFile}.ts:${site.line}`;
     if (hasGaps) {
       totalWithGaps++;
       const paramNames = Array.from(ctx.unconstrainedParams.keys());
-      console.log(`    ⚠ ${shortFile}.ts :: ${site.containerName} (${paramNames.length} unconstrained: ${paramNames.join(", ")})`);
+      console.log(`      ⚠ ${lineRef} — ${site.containerName}  (${paramNames.join(", ")})`);
     } else {
       totalFull++;
-      console.log(`    ✓ ${shortFile}.ts :: ${site.containerName}`);
+      console.log(`      ✓ ${lineRef} — ${site.containerName}`);
     }
   }
-  console.log("");
 }
 
 // ─── Summary ─────────────────────────────────────────────────────
 
-const parts = [`${totalExtracted} extracted`];
-if (totalFull > 0) parts.push(`${totalFull} full`);
-if (totalWithGaps > 0) parts.push(`${totalWithGaps} with gaps`);
-parts.push(`${sites.length} total`);
-
-console.log(`Results:  ${parts.join("  ·  ")}`);
-console.log(`Output:   ${outputBase}/`);
+console.log("");
+console.log(`  ${totalFull} passed, ${totalWithGaps} with gaps`);
+console.log(`  Scanned ${scannedFiles} files via ${basename(tsconfigPath)}`);
+console.log(`  Output: ${outputBase}/`);
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
