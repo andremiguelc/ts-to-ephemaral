@@ -1,0 +1,7 @@
+# Account invariants — drives extraction for Account fixtures
+
+invariant balance_non_negative:
+  account.balance >= 0
+
+invariant limit_respected:
+  account.dailyWithdrawLimit - account.dailyWithdrawn >= 0
