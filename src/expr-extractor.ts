@@ -31,6 +31,12 @@ export interface ExtractionContext {
   unconstrainedParams: Map<string, { node: ts.Node; reason: string }>;
   /** Counter for generating unique unconstrained param names */
   unkCounter: number;
+  /** Accumulated typed parameters (non-input function params with resolvable types) */
+  typedParams: Map<string, string>; // paramName → typeName
+  /** Symbols currently being traced (cycle detection) */
+  _tracingSymbols: Set<ts.Symbol>;
+  /** Override for self-references in reassignment RHS (maps to prior value) */
+  _selfRefOverride: { symbol: ts.Symbol; expr: Expr } | null;
 }
 
 export function createContext(
@@ -49,6 +55,9 @@ export function createContext(
     inputParamName: null,
     unconstrainedParams: new Map(),
     unkCounter: 0,
+    typedParams: new Map(),
+    _tracingSymbols: new Set(),
+    _selfRefOverride: null,
   };
 }
 
@@ -189,9 +198,6 @@ function extractPropertyAccess(
   const fieldName = node.name.text;
 
   // Reject standalone optional chaining (obj?.field without || 0 or ?? default).
-  // The result could be undefined, which is not a valid numeric expression.
-  // When wrapped in || 0 or ??, the BarBarToken/QuestionQuestionToken handler
-  // calls extractNullCoalescing which adds the isPresent guard.
   if (node.questionDotToken) {
     return makeUnconstrained(node, ctx,
       "optional chaining (?.) without null fallback — wrap in `expr ?? 0` or `expr || 0`");
@@ -200,17 +206,29 @@ function extractPropertyAccess(
   // input.field → { field: { name: fieldName } }
   if (ts.isIdentifier(node.expression)) {
     const objName = node.expression.text;
-    // If the object is the input parameter, this is a field reference
     if (objName === ctx.inputParamName || ctx.fieldNames.has(fieldName)) {
       return { field: { name: fieldName } };
     }
   }
 
-  // Nested access: could be a qualified field ref (param.field)
+  // Check if the object is a local variable we can trace
   if (ts.isIdentifier(node.expression)) {
     const objName = node.expression.text;
-    // Could be a typed parameter reference: typedParam.field
-    // Emit as qualified field ref
+    const symbol = ctx.checker.getSymbolAtLocation(node.expression);
+
+    // Is this a function parameter with a resolvable type? → typed param
+    if (symbol?.valueDeclaration && ts.isParameter(symbol.valueDeclaration)) {
+      const paramType = ctx.checker.getTypeAtLocation(symbol.valueDeclaration);
+      const typeSymbol = paramType.getSymbol() ?? paramType.aliasSymbol;
+      if (typeSymbol) {
+        const resolvedTypeName = typeSymbol.getName();
+        ctx.typedParams.set(objName, resolvedTypeName);
+        return { field: { qualifier: objName, name: fieldName } };
+      }
+    }
+
+    // Is this a local variable? Trace it — but we only care about property access
+    // on the resolved value, which we can't do generically. Emit as qualified ref.
     return { field: { qualifier: objName, name: fieldName } };
   }
 
@@ -220,13 +238,19 @@ function extractPropertyAccess(
 function extractIdentifier(node: ts.Identifier, ctx: ExtractionContext): Expr {
   const name = node.text;
 
-  // Known field on the type
+  // Known field on the type → direct field reference
   if (ctx.fieldNames.has(name)) {
     return { field: { name } };
   }
 
-  // Could be a parameter or item field — treat as field ref
-  // (The verifier will classify it as param if not in inputFields)
+  // Try to resolve via symbol — trace local variables back to their initializers
+  const symbol = ctx.checker.getSymbolAtLocation(node);
+  if (symbol) {
+    const resolved = tryTraceLocal(symbol, node, ctx);
+    if (resolved) return resolved;
+  }
+
+  // Unresolvable identifier — could be a parameter or item field
   return { field: { name } };
 }
 
@@ -447,9 +471,330 @@ function makeUnconstrained(
   ctx: ExtractionContext,
   reason: string,
 ): Expr {
-  const name = `__unk_${ctx.unkCounter++}`;
+  const readable = deriveReadableName(node);
+  const name = `__ext_${readable}_${ctx.unkCounter++}`;
   ctx.unconstrainedParams.set(name, { node, reason });
   return { field: { name } };
+}
+
+/**
+ * Derive a readable name from an unresolved AST node.
+ * Uses the outermost function/method name, sanitized for use as an identifier.
+ */
+function deriveReadableName(node: ts.Node): string {
+  // Call expression: parseFloat(...) → "parseFloat", obj.method(...) → "method"
+  if (ts.isCallExpression(node)) {
+    const callee = node.expression;
+    if (ts.isIdentifier(callee)) return sanitizeName(callee.text);
+    if (ts.isPropertyAccessExpression(callee)) {
+      const obj = callee.expression;
+      const method = callee.name.text;
+      if (ts.isIdentifier(obj)) return sanitizeName(`${obj.text}_${method}`);
+      return sanitizeName(method);
+    }
+  }
+
+  // Property access: obj.field → "obj_field"
+  if (ts.isPropertyAccessExpression(node)) {
+    const obj = node.expression;
+    const field = node.name.text;
+    if (ts.isIdentifier(obj)) return sanitizeName(`${obj.text}_${field}`);
+    return sanitizeName(field);
+  }
+
+  // Identifier
+  if (ts.isIdentifier(node)) return sanitizeName(node.text);
+
+  // Fallback: use the first ~20 chars of the node text, sanitized
+  const text = node.getText().substring(0, 20);
+  const cleaned = sanitizeName(text);
+  return cleaned || "expr";
+}
+
+function sanitizeName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "") || "expr";
+}
+
+// ─── Local variable tracing ─────────────────────────────────────
+
+/**
+ * Try to trace a symbol back to its initializer expression.
+ * Returns the extracted Expr if the symbol is a local variable (const/let/var)
+ * in the same function whose initializer we can recurse into.
+ * Returns null if the symbol can't be traced (not a local, cycle detected, etc.)
+ */
+function tryTraceLocal(
+  symbol: ts.Symbol,
+  referenceNode: ts.Node,
+  ctx: ExtractionContext,
+): Expr | null {
+  // Self-reference override: when tracing `result = result + amount`,
+  // the inner `result` maps to the prior value (declaration initializer)
+  if (ctx._selfRefOverride && ctx._selfRefOverride.symbol === symbol) {
+    return ctx._selfRefOverride.expr;
+  }
+
+  // Cycle detection
+  if (ctx._tracingSymbols.has(symbol)) return null;
+
+  const decl = symbol.valueDeclaration;
+  if (!decl) return null;
+
+  // Only trace variable declarations (const/let/var)
+  if (!ts.isVariableDeclaration(decl)) return null;
+
+  // Must have an initializer
+  if (!decl.initializer) return null;
+
+  // For let/var, check if it's ever reassigned. If so, find the last assignment
+  // before the reference point (or bail if reassignment is inside a branch).
+  const declList = decl.parent;
+  if (ts.isVariableDeclarationList(declList)) {
+    const isConst = (declList.flags & ts.NodeFlags.Const) !== 0;
+    if (!isConst) {
+      // let/var — check for reassignments
+      const lastAssign = findLastAssignment(symbol, referenceNode, ctx);
+      if (lastAssign === "branched") return null; // reassignment in a branch
+      if (lastAssign) {
+        // Trace the last assignment's RHS. Self-references in the RHS
+        // (e.g., `result = result + amount`) should trace to the PRIOR value.
+        // We add a special handler: push a "prior value resolver" that maps
+        // self-references to the declaration initializer.
+        ctx._tracingSymbols.add(symbol);
+        // Temporarily swap: self-references in this RHS trace to the initializer
+        const priorExpr = traceInitializer(decl, symbol, ctx);
+        ctx._selfRefOverride = { symbol, expr: priorExpr };
+        const result = extractExpr(lastAssign as ts.Expression, ctx);
+        ctx._selfRefOverride = null;
+        ctx._tracingSymbols.delete(symbol);
+        return result;
+      }
+      // No reassignments found — safe to trace the initializer (single-assignment let/var)
+    }
+  }
+
+  // Check that the declaration is in the same function as the reference
+  const declFunction = getEnclosingFunction(decl);
+  const refFunction = getEnclosingFunction(referenceNode);
+  if (declFunction !== refFunction) {
+    // Module-level const — check if it's a simple literal or constant arithmetic
+    if (!declFunction) {
+      return tryEvalModuleConst(decl.initializer, ctx);
+    }
+    return null;
+  }
+
+  // Trace into the initializer
+  ctx._tracingSymbols.add(symbol);
+  const result = extractExpr(decl.initializer, ctx);
+  ctx._tracingSymbols.delete(symbol);
+  return result;
+}
+
+/**
+ * Trace a variable declaration's initializer, handling the tracing context.
+ */
+function traceInitializer(
+  decl: ts.VariableDeclaration,
+  symbol: ts.Symbol,
+  ctx: ExtractionContext,
+): Expr {
+  if (!decl.initializer) {
+    return makeUnconstrained(decl, ctx, "variable without initializer");
+  }
+  // Don't add to _tracingSymbols here — the caller already did that.
+  // But save/restore selfRefOverride to avoid interference.
+  const savedOverride = ctx._selfRefOverride;
+  ctx._selfRefOverride = null;
+  const result = extractExpr(decl.initializer, ctx);
+  ctx._selfRefOverride = savedOverride;
+  return result;
+}
+
+/**
+ * For a let/var symbol, find the last assignment before the reference point.
+ * Returns:
+ *   - The RHS expression of the last assignment (if straightforward sequential code)
+ *   - "branched" if a reassignment exists inside an if/else/switch
+ *   - null if no reassignments exist (single-assignment)
+ */
+function findLastAssignment(
+  symbol: ts.Symbol,
+  referenceNode: ts.Node,
+  ctx: ExtractionContext,
+): ts.Expression | "branched" | null {
+  const decl = symbol.valueDeclaration;
+  if (!decl) return null;
+
+  const enclosingFn = getEnclosingFunction(decl);
+  if (!enclosingFn) return null;
+
+  // Get the function body
+  const body = "body" in enclosingFn ? (enclosingFn as any).body : null;
+  if (!body || !ts.isBlock(body)) return null;
+
+  const refPos = referenceNode.getStart();
+  let lastRhs: ts.Expression | null = null;
+  let hasBranchedAssign = false;
+
+  function visit(node: ts.Node, inBranch: boolean) {
+    // Don't look past the reference point
+    if (node.getStart() >= refPos) return;
+
+    // Assignment: name = expr
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left)
+    ) {
+      const assignSym = ctx.checker.getSymbolAtLocation(node.left);
+      if (assignSym === symbol) {
+        if (inBranch) {
+          hasBranchedAssign = true;
+        } else {
+          lastRhs = node.right;
+        }
+      }
+    }
+
+    // Compound assignment: name += expr, name -= expr, etc.
+    if (
+      ts.isBinaryExpression(node) &&
+      isCompoundAssignment(node.operatorToken.kind) &&
+      ts.isIdentifier(node.left)
+    ) {
+      const assignSym = ctx.checker.getSymbolAtLocation(node.left);
+      if (assignSym === symbol) {
+        if (inBranch) {
+          hasBranchedAssign = true;
+        } else {
+          // Convert compound assignment to full expression
+          // e.g., total += tax → total + tax (where inner total traces to prior value)
+          lastRhs = node.right; // simplified — compound assigns become unconstrained for now
+          hasBranchedAssign = true; // treat as branched to be safe
+        }
+      }
+    }
+
+    // Track branching
+    const entersBranch = ts.isIfStatement(node) || ts.isSwitchStatement(node)
+      || ts.isConditionalExpression(node) || ts.isForStatement(node)
+      || ts.isWhileStatement(node) || ts.isForOfStatement(node)
+      || ts.isForInStatement(node);
+
+    ts.forEachChild(node, (child) => visit(child, inBranch || entersBranch));
+  }
+
+  ts.forEachChild(body, (child) => visit(child, false));
+
+  if (hasBranchedAssign) return "branched";
+  return lastRhs;
+}
+
+function isCompoundAssignment(kind: ts.SyntaxKind): boolean {
+  return kind === ts.SyntaxKind.PlusEqualsToken
+    || kind === ts.SyntaxKind.MinusEqualsToken
+    || kind === ts.SyntaxKind.AsteriskEqualsToken
+    || kind === ts.SyntaxKind.SlashEqualsToken;
+}
+
+/**
+ * Try to evaluate a module-level const initializer to a literal.
+ * Handles: numeric literals, simple arithmetic on literals.
+ */
+function tryEvalModuleConst(node: ts.Expression, ctx: ExtractionContext): Expr | null {
+  if (ts.isNumericLiteral(node)) {
+    return { lit: Number(node.text) };
+  }
+
+  // -N
+  if (
+    ts.isPrefixUnaryExpression(node) &&
+    node.operator === ts.SyntaxKind.MinusToken &&
+    ts.isNumericLiteral(node.operand)
+  ) {
+    return { lit: -Number(node.operand.text) };
+  }
+
+  // Parenthesized
+  if (ts.isParenthesizedExpression(node)) {
+    return tryEvalModuleConst(node.expression, ctx);
+  }
+
+  // Binary arithmetic on constants: 24 * 60, 24 * 60 / 15, etc.
+  if (ts.isBinaryExpression(node)) {
+    const left = tryEvalModuleConst(node.left, ctx);
+    const right = tryEvalModuleConst(node.right, ctx);
+    if (left && "lit" in left && right && "lit" in right) {
+      const l = left.lit;
+      const r = right.lit;
+      switch (node.operatorToken.kind) {
+        case ts.SyntaxKind.PlusToken: return { lit: l + r };
+        case ts.SyntaxKind.MinusToken: return { lit: l - r };
+        case ts.SyntaxKind.AsteriskToken: return { lit: l * r };
+        case ts.SyntaxKind.SlashToken: return r !== 0 ? { lit: l / r } : null;
+        default: return null;
+      }
+    }
+
+    // One side might be a module-const reference too
+    if (!left || !right) {
+      const leftExpr = tryResolveModuleRef(node.left, ctx);
+      const rightExpr = tryResolveModuleRef(node.right, ctx);
+      if (leftExpr && "lit" in leftExpr && rightExpr && "lit" in rightExpr) {
+        const l = leftExpr.lit;
+        const r = rightExpr.lit;
+        switch (node.operatorToken.kind) {
+          case ts.SyntaxKind.PlusToken: return { lit: l + r };
+          case ts.SyntaxKind.MinusToken: return { lit: l - r };
+          case ts.SyntaxKind.AsteriskToken: return { lit: l * r };
+          case ts.SyntaxKind.SlashToken: return r !== 0 ? { lit: l / r } : null;
+          default: return null;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Try to resolve an expression that might be a reference to another module-level const.
+ */
+function tryResolveModuleRef(node: ts.Expression, ctx: ExtractionContext): Expr | null {
+  if (ts.isNumericLiteral(node)) return { lit: Number(node.text) };
+  if (ts.isParenthesizedExpression(node)) return tryResolveModuleRef(node.expression, ctx);
+
+  if (ts.isIdentifier(node)) {
+    const symbol = ctx.checker.getSymbolAtLocation(node);
+    if (!symbol?.valueDeclaration) return null;
+    if (!ts.isVariableDeclaration(symbol.valueDeclaration)) return null;
+    const init = symbol.valueDeclaration.initializer;
+    if (!init) return null;
+    // Only recurse for module-level (no enclosing function)
+    if (!getEnclosingFunction(symbol.valueDeclaration)) {
+      return tryEvalModuleConst(init, ctx);
+    }
+  }
+
+  return null;
+}
+
+/** Get the nearest enclosing function/method/arrow, or null for module scope. */
+function getEnclosingFunction(node: ts.Node): ts.Node | null {
+  let current = node.parent;
+  while (current) {
+    if (
+      ts.isFunctionDeclaration(current) ||
+      ts.isArrowFunction(current) ||
+      ts.isFunctionExpression(current) ||
+      ts.isMethodDeclaration(current)
+    ) {
+      return current;
+    }
+    current = current.parent;
+  }
+  return null;
 }
 
 // ─── Operator maps ───────────────────────────────────────────────
