@@ -1,8 +1,11 @@
 # ts-to-ephemaral
 
-Parses TypeScript functions into [Aral-fn JSON](https://github.com/andremiguelc/ephemaral/blob/main/ir/README.md) for [ephemaral](https://github.com/andremiguelc/ephemaral) verification.
+Expression-level extractor for [ephemaral](https://github.com/andremiguelc/ephemaral) verification. Reads `.aral` invariant files, searches a TypeScript codebase for assignments to the declared fields, and produces [Aral-fn JSON](https://github.com/andremiguelc/ephemaral/blob/main/ir/README.md) for each site.
 
-The parser reads a TypeScript function declaration and produces a structured JSON representation that ephemaral can formally verify against business rule invariants.
+## Prerequisites
+
+- The target TypeScript project must have **`node_modules` installed** — the TS compiler API needs it for type resolution across files and packages.
+- The project must have a **`tsconfig.json`** — tells the compiler which files to include and how to resolve imports.
 
 ## Install
 
@@ -15,75 +18,46 @@ pnpm install
 ## Usage
 
 ```bash
-npx tsx src/index.ts path/to/function.ts
+npx tsx src/extract.ts <file.aral> --tsconfig <path/to/tsconfig.json> [--out <dir>]
 ```
 
-Output goes to stdout as JSON. Pipe it to a file:
+- `<file.aral>` — path to the `.aral` invariant file
+- `--tsconfig` — path to the target project's `tsconfig.json`
+- `--out` — output directory for `.aral-fn.json` files (default: `.ephemaral/parsed/<aral-name>/`)
 
-```bash
-npx tsx src/index.ts myFunction.ts > .ephemaral/parsed/myFunction.aral-fn.json
-```
+This scans the project for every assignment to the type and fields declared in the `.aral` file, extracts each expression, and writes one `.aral-fn.json` per assignment site.
 
 Then verify with ephemaral:
 
 ```bash
-.ephemaral/bin/ephemaral .ephemaral/parsed/myFunction.aral-fn.json .ephemaral/rules/myType.aral
+ephemaral .ephemaral/parsed/<name>/<site>.aral-fn.json <name>.aral
 ```
 
-## One function per file
+### Output
 
-The parser expects exactly one function declaration per source file. In real codebases, extract the target function into a temporary file before parsing.
+The CLI prints a coverage report grouped by field:
 
-## Supported patterns
+```
+ephemaral extract · <name>.aral → <Type>
 
-Functions must take and return the same type, using spread-and-override to update fields:
+  fieldA
+    ✓ module-ServiceA.ts :: computeResult
+    ⚠ module-ServiceB.ts :: computeResult (1 unconstrained: __unk_0)
 
-```typescript
-function updateRecord(input: MyType, value: number): MyType {
-  if (value <= 0) return input;
-  return { ...input, field: input.field - value };
-}
+  fieldB
+    ✓ module-ServiceA.ts :: computeResult
+
+Results:  3 extracted  ·  2 full  ·  1 with gaps  ·  3 total
+Output:   .ephemaral/parsed/<name>/
 ```
 
-### What works
-
-- **Simple assignment** — spread input, override specific fields
-- **Guard clauses** — early returns that preserve input unchanged
-- **Chained guards** — multiple guard-return statements
-- **Immutable bindings** — `const` intermediate values (auto-inlined)
-- **Conditional expressions** — ternary operators
-- **Arithmetic** — `+`, `-`, `*`, `/` with correct precedence
-- **Rounding** — `Math.floor()`, `Math.ceil()`, `Math.round()`
-- **Comparisons and boolean logic** — `>`, `>=`, `<`, `<=`, `==`, `!=`, `&&`, `||`, `!`
-- **Null coalescing** — `field ?? default` (lowered to presence check)
-- **Typed parameter access** — `param.field` with dot notation
-
-### What doesn't work
-
-**REWRITE errors** — restructure the function:
-- Lambdas, closures, class methods (use standalone function declarations)
-- Mutable variables (use `const`)
-- Exception throwing (use guard-return pattern)
-- Missing return type annotation
-- Nested field access deeper than one level
-
-**NOT VERIFIABLE errors** — fundamental limitations:
-- Collection operations (reduce, map, filter)
-- Index operations (bracket access)
-- Boolean-returning functions (must return same type as input)
-
-## Error messages
-
-Errors have two prefixes:
-
-- **`REWRITE:`** — the function's structure doesn't fit the supported pattern, but it can be restructured. The message shows what to change.
-- **`NOT VERIFIABLE:`** — the function uses a pattern that can't be represented in the verification IR. The message suggests a workaround (usually: extract the unsupported part as a parameter).
+- **✓** — fully extracted, all sub-expressions resolved
+- **⚠** — extracted with unconstrained gaps (names the params)
 
 ## Running tests
 
 ```bash
-pip install pytest
-pytest tests/ -v
+npm test
 ```
 
 ## License
