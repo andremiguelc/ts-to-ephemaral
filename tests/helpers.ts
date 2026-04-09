@@ -64,7 +64,10 @@ export function extractAll(aralName: string): ExtractedSite[] {
       name: `${site.containerName}-${site.fieldName}`,
       inputType: target.typeName,
       inputFields: Array.from(knownFields),
-      params: Array.from(ctx.unconstrainedParams.keys()),
+      params: [
+        ...Array.from(ctx.unconstrainedParams.keys()),
+        ...collectQualifiedParamNames(expr),
+      ],
       assigns: [{ fieldName: site.fieldName, value: expr }],
       filePath: site.filePath,
       line: site.line,
@@ -142,6 +145,33 @@ function detectInputParam(site: AssignmentSite): string | null {
     current = current.parent;
   }
   return null;
+}
+
+function collectQualifiedParamNames(expr: Expr): string[] {
+  const names: string[] = [];
+  walk(expr);
+  return names;
+
+  function walk(e: Expr) {
+    if ("lit" in e) return;
+    if ("field" in e) {
+      if ("qualifier" in e.field) names.push(e.field.qualifier + "-" + e.field.name);
+      return;
+    }
+    if ("arith" in e) { walk(e.arith.left); walk(e.arith.right); return; }
+    if ("ite" in e) { walkBool(e.ite.cond); walk(e.ite.then); walk(e.ite.else); return; }
+    if ("round" in e) { walk(e.round.expr); return; }
+    if ("sum" in e) { walk(e.sum.body); return; }
+  }
+
+  function walkBool(b: BoolExpr) {
+    if ("cmp" in b) { walk(b.cmp.left); walk(b.cmp.right); }
+    else if ("logic" in b) { walkBool(b.logic.left); walkBool(b.logic.right); }
+    else if ("not" in b) { walkBool(b.not); }
+    else if ("isPresent" in b) {
+      if ("qualifier" in b.isPresent) names.push(b.isPresent.qualifier + "-" + b.isPresent.name);
+    }
+  }
 }
 
 function collectFieldNames(expr: Expr): Set<string> {

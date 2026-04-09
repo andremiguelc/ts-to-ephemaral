@@ -270,6 +270,26 @@ describe("typed parameters", () => {
       r.typedParams!.some((tp: any) => tp.name === "discount" && tp.type === "Discount"),
       "typedParams should include discount:Discount"
     );
+    // params must include compound "qualifier-name" for the verifier
+    assert.ok(r.params.includes("discount-percent"), "params should include discount-percent");
+  });
+
+  it("local variable with resolvable type populates typedParams", () => {
+    // const discount: Discount = ... → discount.percent should also produce a typed param
+    const r = extractOne("order.aral", "total", { sourceFile: "local_var_qualified.ts" });
+    const v = getAssign(r);
+    assert.equal(v.arith.op, "sub");
+    assert.deepStrictEqual(v.arith.left, { field: { name: "subtotal" } });
+    // discount.percent should be a qualified field ref even though discount is a local var
+    assert.deepStrictEqual(v.arith.right, { field: { qualifier: "discount", name: "percent" } });
+    // The typedParams should include discount → Discount
+    assert.ok(r.typedParams, "should have typedParams");
+    assert.ok(
+      r.typedParams!.some((tp: any) => tp.name === "discount" && tp.type === "Discount"),
+      "typedParams should include discount:Discount"
+    );
+    // params must include compound "qualifier-name" for the verifier
+    assert.ok(r.params.includes("discount-percent"), "params should include discount-percent");
   });
 });
 
