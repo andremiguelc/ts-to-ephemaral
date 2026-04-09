@@ -282,17 +282,18 @@ function collectFieldNames(expr: Expr): Set<string> {
   }
 }
 
-/** Collect compound "qualifier-name" strings from qualified field refs in an expression. */
+/** Collect compound "qualifier-name" strings from qualified field refs in an expression.
+ *  For isPresent on qualified fields, also emits the "has-qualifier-name" presence key. */
 function collectQualifiedParamNames(expr: Expr): string[] {
-  const names: string[] = [];
+  const names = new Set<string>();
   walkExpr(expr);
-  return names;
+  return Array.from(names);
 
   function walkExpr(e: Expr) {
     if ("lit" in e) return;
     if ("field" in e) {
       if ("qualifier" in e.field) {
-        names.push(e.field.qualifier + "-" + e.field.name);
+        names.add(e.field.qualifier + "-" + e.field.name);
       }
       return;
     }
@@ -328,7 +329,9 @@ function collectQualifiedParamNames(expr: Expr): string[] {
       walkBoolExpr(b.not);
     } else if ("isPresent" in b) {
       if ("qualifier" in b.isPresent) {
-        names.push(b.isPresent.qualifier + "-" + b.isPresent.name);
+        const key = b.isPresent.qualifier + "-" + b.isPresent.name;
+        names.add(key);
+        names.add("has-" + key);
       }
     }
   }

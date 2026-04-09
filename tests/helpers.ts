@@ -148,14 +148,14 @@ function detectInputParam(site: AssignmentSite): string | null {
 }
 
 function collectQualifiedParamNames(expr: Expr): string[] {
-  const names: string[] = [];
+  const names = new Set<string>();
   walk(expr);
-  return names;
+  return Array.from(names);
 
   function walk(e: Expr) {
     if ("lit" in e) return;
     if ("field" in e) {
-      if ("qualifier" in e.field) names.push(e.field.qualifier + "-" + e.field.name);
+      if ("qualifier" in e.field) names.add(e.field.qualifier + "-" + e.field.name);
       return;
     }
     if ("arith" in e) { walk(e.arith.left); walk(e.arith.right); return; }
@@ -169,7 +169,11 @@ function collectQualifiedParamNames(expr: Expr): string[] {
     else if ("logic" in b) { walkBool(b.logic.left); walkBool(b.logic.right); }
     else if ("not" in b) { walkBool(b.not); }
     else if ("isPresent" in b) {
-      if ("qualifier" in b.isPresent) names.push(b.isPresent.qualifier + "-" + b.isPresent.name);
+      if ("qualifier" in b.isPresent) {
+        const key = b.isPresent.qualifier + "-" + b.isPresent.name;
+        names.add(key);
+        names.add("has-" + key);
+      }
     }
   }
 }
