@@ -18,15 +18,19 @@ pnpm install
 ## Usage
 
 ```bash
-npx tsx src/extract.ts <file.aral> --tsconfig <path/to/tsconfig.json>
+npx tsx src/extract.ts <file.aral> --tsconfig <path/to/tsconfig.json> [--out <dir>]
 ```
 
-This scans the project for every assignment to the type and fields declared in the `.aral` file, extracts each expression, and writes `.aral-fn.json` files to `.ephemaral/parsed/<aral-name>/`.
+- `<file.aral>` — path to the `.aral` invariant file
+- `--tsconfig` — path to the target project's `tsconfig.json`
+- `--out` — output directory for `.aral-fn.json` files (default: `.ephemaral/parsed/<aral-name>/`)
 
-Then verify each with ephemaral:
+This scans the project for every assignment to the type and fields declared in the `.aral` file, extracts each expression, and writes one `.aral-fn.json` per assignment site.
+
+Then verify with ephemaral:
 
 ```bash
-.ephemaral/bin/ephemaral .ephemaral/parsed/payment/site-abc123-amount.aral-fn.json .ephemaral/rules/payment.aral
+ephemaral .ephemaral/parsed/<name>/<site>.aral-fn.json <name>.aral
 ```
 
 ### Output
@@ -34,17 +38,17 @@ Then verify each with ephemaral:
 The CLI prints a coverage report grouped by field:
 
 ```
-ephemaral extract · payment.aral → Payment
+ephemaral extract · <name>.aral → <Type>
 
-  amount
-    ✓ stripe-PaymentService.ts :: createPayment
-    ⚠ hitpay-PaymentService.ts :: createPayment (1 unconstrained: __unk_0)
+  fieldA
+    ✓ module-ServiceA.ts :: computeResult
+    ⚠ module-ServiceB.ts :: computeResult (1 unconstrained: __unk_0)
 
-  fee
-    ✓ stripe-PaymentService.ts :: createPayment
+  fieldB
+    ✓ module-ServiceA.ts :: computeResult
 
 Results:  3 extracted  ·  2 full  ·  1 with gaps  ·  3 total
-Output:   .ephemaral/parsed/payment/
+Output:   .ephemaral/parsed/<name>/
 ```
 
 - **✓** — fully extracted, all sub-expressions resolved
@@ -53,14 +57,8 @@ Output:   .ephemaral/parsed/payment/
 ## Running tests
 
 ```bash
-pip install pytest
-pytest tests/ -v
+npm test
 ```
-
-## Branches
-
-- `expression-level` — current development (expression-level extraction)
-- `main` — previous function-level parser (preserved, no longer active)
 
 ## License
 
