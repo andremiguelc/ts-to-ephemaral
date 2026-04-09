@@ -4,9 +4,9 @@
   "description": "Parse TypeScript functions into Aral-fn JSON for ephemaral verification",
   "license": "Apache-2.0",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "src/extract.ts",
   "bin": {
-    "ts-to-ephemaral": "src/index.ts"
+    "ts-to-ephemaral": "src/extract.ts"
   },
   "aralFnVersion": "0.1.1",
   "scripts": {
