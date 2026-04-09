@@ -216,8 +216,11 @@ function extractPropertyAccess(
     const objName = node.expression.text;
     const symbol = ctx.checker.getSymbolAtLocation(node.expression);
 
-    // Is this a function parameter with a resolvable type? → typed param
-    if (symbol?.valueDeclaration && ts.isParameter(symbol.valueDeclaration)) {
+    // Is this a function parameter or local variable with a resolvable type? → typed param
+    if (symbol?.valueDeclaration && (
+      ts.isParameter(symbol.valueDeclaration) ||
+      ts.isVariableDeclaration(symbol.valueDeclaration)
+    )) {
       const paramType = ctx.checker.getTypeAtLocation(symbol.valueDeclaration);
       const typeSymbol = paramType.getSymbol() ?? paramType.aliasSymbol;
       if (typeSymbol) {
@@ -227,9 +230,8 @@ function extractPropertyAccess(
       }
     }
 
-    // Is this a local variable? Trace it — but we only care about property access
-    // on the resolved value, which we can't do generically. Emit as qualified ref.
-    return { field: { qualifier: objName, name: fieldName } };
+    // Type couldn't be resolved — fall back to __ext_ naming
+    return makeUnconstrained(node, ctx, "property access on variable with unresolvable type");
   }
 
   return makeUnconstrained(node, ctx, "complex property access");
