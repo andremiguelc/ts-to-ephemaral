@@ -135,7 +135,10 @@ for (const [fieldName, fieldSites] of sitesByField) {
       name: `${site.containerName}-${fieldName}`,
       inputType: target.typeName,
       inputFields: Array.from(knownFields),
-      params: Array.from(ctx.unconstrainedParams.keys()),
+      params: [
+        ...Array.from(ctx.unconstrainedParams.keys()),
+        ...collectQualifiedParamNames(expr),
+      ],
       assigns: [{ fieldName, value: expr }],
     };
 
@@ -275,6 +278,58 @@ function collectFieldNames(expr: Expr): Set<string> {
       walkBoolExpr(b.not);
     } else if ("isPresent" in b) {
       if ("name" in b.isPresent) names.add(b.isPresent.name);
+    }
+  }
+}
+
+/** Collect compound "qualifier-name" strings from qualified field refs in an expression. */
+function collectQualifiedParamNames(expr: Expr): string[] {
+  const names: string[] = [];
+  walkExpr(expr);
+  return names;
+
+  function walkExpr(e: Expr) {
+    if ("lit" in e) return;
+    if ("field" in e) {
+      if ("qualifier" in e.field) {
+        names.push(e.field.qualifier + "-" + e.field.name);
+      }
+      return;
+    }
+    if ("arith" in e) {
+      walkExpr(e.arith.left);
+      walkExpr(e.arith.right);
+      return;
+    }
+    if ("ite" in e) {
+      walkBoolExpr(e.ite.cond);
+      walkExpr(e.ite.then);
+      walkExpr(e.ite.else);
+      return;
+    }
+    if ("round" in e) {
+      walkExpr(e.round.expr);
+      return;
+    }
+    if ("sum" in e) {
+      walkExpr(e.sum.body);
+      return;
+    }
+  }
+
+  function walkBoolExpr(b: BoolExpr) {
+    if ("cmp" in b) {
+      walkExpr(b.cmp.left);
+      walkExpr(b.cmp.right);
+    } else if ("logic" in b) {
+      walkBoolExpr(b.logic.left);
+      walkBoolExpr(b.logic.right);
+    } else if ("not" in b) {
+      walkBoolExpr(b.not);
+    } else if ("isPresent" in b) {
+      if ("qualifier" in b.isPresent) {
+        names.push(b.isPresent.qualifier + "-" + b.isPresent.name);
+      }
     }
   }
 }
