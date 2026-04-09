@@ -1,0 +1,7 @@
+# Order invariants — drives extraction for Order fixtures
+
+invariant total_non_negative:
+  order.total >= 0
+
+invariant subtotal_is_sum:
+  order.subtotal == sum(order.lineItems, unitPrice)

@@ -1,17 +1,22 @@
 {
   "name": "ts-to-ephemaral",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Parse TypeScript functions into Aral-fn JSON for ephemaral verification",
   "license": "Apache-2.0",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "src/extract.ts",
   "bin": {
-    "ts-to-ephemaral": "src/index.ts"
+    "ts-to-ephemaral": "src/extract.ts"
   },
+  "aralFnVersion": "0.1.1",
   "scripts": {
-    "parse": "npx tsx src/index.ts"
+    "extract": "npx tsx src/extract.ts",
+    "test": "npx tsx --test tests/extract.test.ts"
   },
   "devDependencies": {
     "tsx": "^4.0.0"
+  },
+  "dependencies": {
+    "typescript": "5.9.3"
   }
 }
