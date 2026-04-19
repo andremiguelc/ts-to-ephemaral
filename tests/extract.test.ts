@@ -266,6 +266,103 @@ describe("collection each", () => {
   });
 });
 
+// ─── Return guards ──────────────────────────────────────────────
+
+describe("return guards", () => {
+  it("bare return guard wraps assignment in ite", () => {
+    // if (amount <= 0) return account; return { ...account, balance: account.balance + amount }
+    const r = fromAccount("balance", "guard_single.ts");
+    const v = getAssign(r);
+    assert.ok("ite" in v, "return guard should produce an ite wrapping");
+    assert.equal(v.ite.cond.cmp.op, "lte");
+    assert.deepStrictEqual(v.ite.cond.cmp.left, { field: { name: "amount" } });
+    assert.deepStrictEqual(v.ite.cond.cmp.right, { lit: 0 });
+    // Pass-through `return account` → balance is unchanged in the early branch
+    assert.deepStrictEqual(v.ite.then, { field: { name: "balance" } });
+    // Else is the normal assignment expression
+    assert.equal(v.ite.else.arith.op, "add");
+  });
+
+  it("single-statement block form equivalent to bare", () => {
+    // if (amount <= 0) { return account; } ...
+    const r = fromAccount("balance", "guard_return_block_single.ts");
+    const v = getAssign(r);
+    assert.ok("ite" in v, "block-form guard should produce an ite wrapping");
+    assert.equal(v.ite.cond.cmp.op, "lte");
+    assert.deepStrictEqual(v.ite.then, { field: { name: "balance" } });
+  });
+
+  it("sequential guards fold into nested ite outermost-first", () => {
+    // if (amount <= 0) return account; if (amount > account.balance) return account; return {...}
+    const r = fromAccount("balance", "guard_nested.ts");
+    const v = getAssign(r);
+    assert.ok("ite" in v, "outer guard should produce outermost ite");
+    // Outermost is the first guard: amount <= 0
+    assert.equal(v.ite.cond.cmp.op, "lte");
+    assert.deepStrictEqual(v.ite.cond.cmp.right, { lit: 0 });
+    // Inner ite is the second guard
+    assert.ok("ite" in v.ite.else, "second guard should be nested inside");
+    assert.equal(v.ite.else.ite.cond.cmp.op, "gt");
+    // Innermost else is the original assignment
+    assert.equal(v.ite.else.ite.else.arith.op, "sub");
+  });
+
+  it("null-check guard uses isPresent via !field", () => {
+    // if (!order.discount) return order; return { ...order, total: order.subtotal - order.discount.percent }
+    const r = fromOrder("total", "guard_return_null.ts");
+    const v = getAssign(r);
+    assert.ok("ite" in v);
+    // cond is the negation of isPresent(discount)
+    assert.ok("not" in v.ite.cond);
+    assert.deepStrictEqual(v.ite.cond.not, { isPresent: { name: "discount" } });
+    // pass-through: total unchanged in the null branch
+    assert.deepStrictEqual(v.ite.then, { field: { name: "total" } });
+  });
+
+  it("throw-guard silently ignored (v0.2.2 scope)", () => {
+    // if (amount <= 0) throw ...; return { ...account, balance: account.balance + amount }
+    const r = fromAccount("balance", "guard_throw_silent.ts");
+    const v = getAssign(r);
+    // No ite wrapping — throw-guards aren't narrowed in v0.2.2. v0.2.3 will
+    // flip this oracle intentionally when preconditions ship.
+    assert.ok(
+      !("ite" in v),
+      "throw-guard must not produce an ite wrapping in v0.2.2",
+    );
+    assert.equal(v.arith.op, "add");
+  });
+
+  it("multi-statement block in then-branch → guard layer bails to __ext_", () => {
+    // if (amount <= 0) { amount = 0; return account; } return { ...account, balance: ... }
+    const r = fromAccount("balance", "guard_return_block_multistmt_negative.ts");
+    const v = getAssign(r);
+    // Guard layer bails → assignment falls through to __ext_
+    assert.ok("field" in v, "bailed guard layer should emit a field ref");
+    assert.ok(
+      v.field.name.startsWith("__ext_"),
+      `expected __ext_ param, got ${v.field.name}`,
+    );
+  });
+
+  it("if/else both-return extracts per-branch, no cross-branch ite (v0.2.2 scope)", () => {
+    // if (amount > 0) { return {...balance: + amount} } else { return {...balance: account.balance} }
+    const all = extractAll("account.aral");
+    const fromIfElse = all.filter((s) =>
+      s.filePath.endsWith("guard_if_else_both_return_negative.ts"),
+    );
+    assert.equal(fromIfElse.length, 2, "both branches produce a balance site");
+    // Neither site has an ite wrapping from Slice B's pre-pass (no preceding
+    // top-level guards at the function body level).
+    for (const site of fromIfElse) {
+      const v = site.assigns[0].value;
+      assert.ok(
+        !("ite" in v),
+        `if/else both-return branch must not produce a cross-branch ite in v0.2.2 (got ${JSON.stringify(v)})`,
+      );
+    }
+  });
+});
+
 // ─── Multiple assignments ───────────────────────────────────────
 
 describe("multiple assignments", () => {

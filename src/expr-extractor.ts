@@ -13,6 +13,7 @@ import type {
   CompOp,
   RoundingMode,
 } from "./types.js";
+import type { AssignmentSite } from "./field-finder.js";
 
 export interface ExtractionContext {
   /** The root type name (e.g., "Payment") */
@@ -59,6 +60,30 @@ export function createContext(
     _tracingSymbols: new Set(),
     _selfRefOverride: null,
   };
+}
+
+/**
+ * Extract an assignment-site value, applying enclosing return-guards as
+ * nested `ite` wrappers. Pure parser work: uses existing `ite` IR only.
+ *
+ * Handles three guard shapes (bare `if (G) return X;`, single-stmt block,
+ * and sequential stacks). Throw-guards are silently ignored — narrowing them
+ * correctly needs a preconditions field in Aral-fn JSON, deferred.
+ */
+export function extractAssignedExpr(
+  site: AssignmentSite,
+  ctx: ExtractionContext,
+): Expr {
+  const body = extractExpr(site.expressionNode, ctx);
+  const guards = collectReturnGuards(site.expressionNode, site.fieldName, ctx);
+  if (guards === "bail") {
+    return makeUnconstrained(
+      site.expressionNode,
+      ctx,
+      "return-guard layer bailed (complex guard form)",
+    );
+  }
+  return applyGuardsToExpr(body, guards);
 }
 
 /**
@@ -188,6 +213,16 @@ export function extractBoolExpr(
   if (ts.isCallExpression(node)) {
     const each = tryExtractEvery(node, ctx);
     if (each) return each;
+  }
+
+  // Bare field ref on a nullable type used as a boolean → isPresent.
+  // Covers `if (!obj.field)` and `if (field)` on optional fields.
+  if (ts.isPropertyAccessExpression(node) || ts.isIdentifier(node)) {
+    const type = ctx.checker.getTypeAtLocation(node);
+    if (typeIsNullable(type, ctx.checker)) {
+      const expr = extractExpr(node, ctx);
+      if ("field" in expr) return { isPresent: expr.field };
+    }
   }
 
   // Fallback: wrap an unconstrained param in a trivial comparison
@@ -972,4 +1007,141 @@ function mapRoundingMode(method: string): RoundingMode | null {
     case "round": return "half_up";
     default: return null;
   }
+}
+
+// ─── Return-guard pre-pass ──────────────────────────────────────
+
+/**
+ * Walk up from an assignment-site expression to the enclosing function body,
+ * iterate the top-level statements before the dominating statement, and
+ * collect each qualifying return-guard as (cond, early) pairs.
+ *
+ * Returns "bail" when any guard has a shape we don't handle cleanly in v0.2.2
+ * (block with multiple statements, if/else where both branches return, early
+ * values we can't extract) — the caller then falls the whole assignment to
+ * `__ext_` rather than partial-extracting.
+ */
+function collectReturnGuards(
+  node: ts.Node,
+  fieldName: string,
+  ctx: ExtractionContext,
+): Array<{ cond: BoolExpr; early: Expr }> | "bail" {
+  const fn = getEnclosingFunction(node);
+  if (!fn) return [];
+
+  const body = (fn as { body?: ts.Node }).body;
+  if (!body || !ts.isBlock(body)) return [];
+
+  // Find the top-level statement of the function body that contains `node`.
+  let dominatingStmt: ts.Statement | null = null;
+  for (const stmt of body.statements) {
+    if (node.getStart() >= stmt.getStart() && node.getEnd() <= stmt.getEnd()) {
+      dominatingStmt = stmt;
+      break;
+    }
+  }
+  if (!dominatingStmt) return [];
+
+  const guards: Array<{ cond: BoolExpr; early: Expr }> = [];
+  for (const stmt of body.statements) {
+    if (stmt === dominatingStmt) break;
+    const matched = matchReturnGuard(stmt, fieldName, ctx);
+    if (matched === "bail") return "bail";
+    if (matched === "skip") continue;
+    guards.push(matched);
+  }
+  return guards;
+}
+
+function matchReturnGuard(
+  stmt: ts.Statement,
+  fieldName: string,
+  ctx: ExtractionContext,
+): { cond: BoolExpr; early: Expr } | "bail" | "skip" {
+  // Non-if statements (const decls, other returns before the dominating one,
+  // etc.) neither bail nor contribute a guard. Returns before the dominating
+  // statement shouldn't happen at the top level of a block, but be permissive.
+  if (!ts.isIfStatement(stmt)) return "skip";
+
+  // if/else where both branches return different values is out of scope for v0.2.2.
+  if (stmt.elseStatement) return "bail";
+
+  let inner: ts.Statement = stmt.thenStatement;
+  if (ts.isBlock(inner)) {
+    if (inner.statements.length !== 1) return "bail";
+    inner = inner.statements[0];
+  }
+
+  // Throw-guards: silently ignore. Correct handling needs a preconditions
+  // field in Aral-fn, deferred to v0.2.3.
+  if (ts.isThrowStatement(inner)) return "skip";
+
+  if (ts.isReturnStatement(inner)) {
+    if (!inner.expression) return "skip"; // void return — nothing to express
+    const early = extractEarlyValue(inner.expression, fieldName, ctx);
+    if (early === "bail") return "bail";
+    const cond = extractBoolExpr(stmt.expression, ctx);
+    return { cond, early };
+  }
+
+  // Any other statement kind in the then-branch → bail.
+  return "bail";
+}
+
+/**
+ * Resolve the value an early-return represents for a specific field.
+ * Handles pass-through identities (return <inputParam>) and object literals
+ * with matching field properties or a spread. Anything else bails.
+ */
+function extractEarlyValue(
+  inner: ts.Expression,
+  fieldName: string,
+  ctx: ExtractionContext,
+): Expr | "bail" {
+  // Pass-through: `return <inputParam>` → this field is unchanged.
+  if (
+    ts.isIdentifier(inner) &&
+    ctx.inputParamName !== null &&
+    inner.text === ctx.inputParamName
+  ) {
+    return { field: { name: fieldName } };
+  }
+
+  // Object literal: look for the assigned field explicitly; if a spread is
+  // present and the field isn't listed, treat it as pass-through for that field.
+  if (ts.isObjectLiteralExpression(inner)) {
+    let hasSpread = false;
+    for (const prop of inner.properties) {
+      if (ts.isSpreadAssignment(prop)) {
+        hasSpread = true;
+        continue;
+      }
+      if (
+        ts.isPropertyAssignment(prop) &&
+        ts.isIdentifier(prop.name) &&
+        prop.name.text === fieldName
+      ) {
+        return extractExpr(prop.initializer, ctx);
+      }
+    }
+    if (hasSpread) return { field: { name: fieldName } };
+    return "bail";
+  }
+
+  // Literal, field ref, arithmetic, etc. — extract through the normal path.
+  return extractExpr(inner, ctx);
+}
+
+function applyGuardsToExpr(
+  body: Expr,
+  guards: Array<{ cond: BoolExpr; early: Expr }>,
+): Expr {
+  // Fold innermost-first so the outermost `ite` corresponds to the first
+  // guard in source order.
+  let result = body;
+  for (let i = guards.length - 1; i >= 0; i--) {
+    const { cond, early } = guards[i];
+    result = { ite: { cond, then: early, else: result } };
+  }
+  return result;
 }

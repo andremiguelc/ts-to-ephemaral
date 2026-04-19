@@ -9,7 +9,7 @@ import { fileURLToPath } from "url";
 import ts from "typescript";
 import { readAralFile } from "../src/aral-reader.js";
 import { createProgramFromConfig, findAssignmentSites, type AssignmentSite } from "../src/field-finder.js";
-import { extractExpr, createContext } from "../src/expr-extractor.js";
+import { extractAssignedExpr, createContext } from "../src/expr-extractor.js";
 import type { AralFn, Expr, BoolExpr } from "../src/types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -50,7 +50,7 @@ export function extractAll(aralName: string): ExtractedSite[] {
     );
     ctx.inputParamName = detectInputParam(site);
 
-    const expr = extractExpr(site.expressionNode, ctx);
+    const expr = extractAssignedExpr(site, ctx);
     const referencedFields = collectFieldNames(expr);
 
     const knownFields = new Set(

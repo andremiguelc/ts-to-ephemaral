@@ -15,7 +15,7 @@ import { resolve, basename, dirname, join } from "path";
 import { readAralFile } from "./aral-reader.js";
 import { createProgramFromConfig, findAssignmentSites } from "./field-finder.js";
 import {
-  extractExpr,
+  extractAssignedExpr,
   createContext,
   type ExtractionContext,
 } from "./expr-extractor.js";
@@ -118,7 +118,7 @@ for (const [fieldName, fieldSites] of sitesByField) {
     // Try to detect the input parameter name from the containing function
     ctx.inputParamName = detectInputParam(site);
 
-    const expr = extractExpr(site.expressionNode, ctx);
+    const expr = extractAssignedExpr(site, ctx);
 
     // Collect all fields referenced in the expression
     const referencedFields = collectFieldNames(expr);
