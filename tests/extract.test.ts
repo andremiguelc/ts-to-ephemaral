@@ -501,6 +501,40 @@ describe("module-level constants", () => {
   });
 });
 
+// ─── Free primitive function parameters ────────────────────────
+
+describe("free function parameters", () => {
+  it("bare numeric parameter lands in params so the verifier declares it", () => {
+    // deposit(account: Account, amount: number): `balance: account.balance + amount`
+    const r = fromAccount("balance", "arith_add.ts");
+    assert.ok(
+      r.params.includes("amount"),
+      `expected 'amount' in params, got ${JSON.stringify(r.params)}`,
+    );
+  });
+
+  it("guard fixture declares its amount parameter", () => {
+    // if (amount <= 0) return account; return { ...account, balance: ... + amount }
+    const r = fromAccount("balance", "guard_single.ts");
+    assert.ok(
+      r.params.includes("amount"),
+      `expected 'amount' in params, got ${JSON.stringify(r.params)}`,
+    );
+  });
+
+  it("non-numeric parameters do not land in params (status quo)", () => {
+    // processOrder(order: Order, rawAmount: string) → parseFloat(rawAmount)
+    // rawAmount is never bare-extracted (the whole parseFloat call goes to __ext_).
+    const r = extractOne("order.aral", "total", {
+      sourceFile: "call_unconstrained.ts",
+    });
+    assert.ok(
+      !r.params.includes("rawAmount"),
+      "string parameters should not land in the numeric params list",
+    );
+  });
+});
+
 // ─── __ext_ naming for parser gaps ─────────────────────────────
 
 describe("__ext_ unconstrained naming", () => {

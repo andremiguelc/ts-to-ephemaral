@@ -137,6 +137,7 @@ for (const [fieldName, fieldSites] of sitesByField) {
       inputFields: Array.from(knownFields),
       params: [
         ...Array.from(ctx.unconstrainedParams.keys()),
+        ...Array.from(ctx.functionParams),
         ...collectQualifiedParamNames(expr),
       ],
       assigns: [{ fieldName, value: expr }],

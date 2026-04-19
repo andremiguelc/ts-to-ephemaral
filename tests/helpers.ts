@@ -66,6 +66,7 @@ export function extractAll(aralName: string): ExtractedSite[] {
       inputFields: Array.from(knownFields),
       params: [
         ...Array.from(ctx.unconstrainedParams.keys()),
+        ...Array.from(ctx.functionParams),
         ...collectQualifiedParamNames(expr),
       ],
       assigns: [{ fieldName: site.fieldName, value: expr }],

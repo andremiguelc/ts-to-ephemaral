@@ -34,6 +34,10 @@ export interface ExtractionContext {
   unkCounter: number;
   /** Accumulated typed parameters (non-input function params with resolvable types) */
   typedParams: Map<string, string>; // paramName → typeName
+  /** Accumulated bare primitive function parameters used as free variables.
+   *  These land in the output `params` list so the verifier declares them as
+   *  SMT constants instead of rejecting them as unknown references. */
+  functionParams: Set<string>;
   /** Symbols currently being traced (cycle detection) */
   _tracingSymbols: Set<ts.Symbol>;
   /** Override for self-references in reassignment RHS (maps to prior value) */
@@ -57,6 +61,7 @@ export function createContext(
     unconstrainedParams: new Map(),
     unkCounter: 0,
     typedParams: new Map(),
+    functionParams: new Set(),
     _tracingSymbols: new Set(),
     _selfRefOverride: null,
   };
@@ -291,6 +296,23 @@ function extractIdentifier(node: ts.Identifier, ctx: ExtractionContext): Expr {
   if (symbol) {
     const resolved = tryTraceLocal(symbol, node, ctx);
     if (resolved) return resolved;
+
+    // Bare primitive function parameter (not the input param) → declare as a
+    // free variable in ctx.functionParams so the verifier creates an SMT
+    // constant for it. Only numeric primitives — other kinds stay as bare
+    // field refs (status quo; the verifier will reject them as today).
+    const decl = symbol.valueDeclaration;
+    if (
+      decl &&
+      ts.isParameter(decl) &&
+      name !== ctx.inputParamName
+    ) {
+      const paramType = ctx.checker.getTypeAtLocation(decl);
+      if ((paramType.flags & ts.TypeFlags.NumberLike) !== 0) {
+        ctx.functionParams.add(name);
+        return { field: { name } };
+      }
+    }
   }
 
   // Unresolvable identifier — could be a parameter or item field
