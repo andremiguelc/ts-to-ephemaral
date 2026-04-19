@@ -81,6 +81,12 @@ export function extractAll(aralName: string): ExtractedSite[] {
       );
     }
 
+    // Add optionalFields for any simple-name field referenced by an isPresent node.
+    const optionalFields = Array.from(collectOptionalFields(expr));
+    if (optionalFields.length > 0) {
+      result.optionalFields = optionalFields;
+    }
+
     results.push(result);
   }
 
@@ -173,6 +179,31 @@ function collectQualifiedParamNames(expr: Expr): string[] {
         const key = b.isPresent.qualifier + "-" + b.isPresent.name;
         names.add(key);
         names.add("has-" + key);
+      }
+    }
+  }
+}
+
+function collectOptionalFields(expr: Expr): Set<string> {
+  const names = new Set<string>();
+  walk(expr);
+  return names;
+
+  function walk(e: Expr) {
+    if ("lit" in e || "field" in e) return;
+    if ("arith" in e) { walk(e.arith.left); walk(e.arith.right); return; }
+    if ("ite" in e) { walkBool(e.ite.cond); walk(e.ite.then); walk(e.ite.else); return; }
+    if ("round" in e) { walk(e.round.expr); return; }
+    if ("sum" in e) { walk(e.sum.body); return; }
+  }
+
+  function walkBool(b: BoolExpr) {
+    if ("cmp" in b) { walk(b.cmp.left); walk(b.cmp.right); }
+    else if ("logic" in b) { walkBool(b.logic.left); walkBool(b.logic.right); }
+    else if ("not" in b) { walkBool(b.not); }
+    else if ("isPresent" in b) {
+      if ("name" in b.isPresent && !("qualifier" in b.isPresent)) {
+        names.add(b.isPresent.name);
       }
     }
   }

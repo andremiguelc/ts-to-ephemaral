@@ -149,6 +149,14 @@ for (const [fieldName, fieldSites] of sitesByField) {
       );
     }
 
+    // Add optionalFields for any simple-name field referenced by an isPresent node.
+    // The walker only collects simple-name refs, so qualified (typed-param) refs
+    // don't land here — they flow through params via collectQualifiedParamNames.
+    const optionalFields = Array.from(collectOptionalFields(expr));
+    if (optionalFields.length > 0) {
+      aralFn.optionalFields = optionalFields;
+    }
+
     // Write the JSON file
     const shortFile = makeShortPath(site.filePath);
     const hash = hashId(`${site.filePath}:${site.line}:${fieldName}`);
@@ -230,6 +238,56 @@ function detectInputParam(site: (typeof sites)[0]): string | null {
     current = current.parent;
   }
   return null;
+}
+
+/** Collect simple-name field refs appearing inside isPresent nodes.
+ *  These populate the top-level optionalFields — isPresent(f) is only meaningful
+ *  when f is declared optional, and the pipeline uses optionalFields to generate
+ *  has-<field> presence constants that the isPresent compilation depends on. */
+function collectOptionalFields(expr: Expr): Set<string> {
+  const names = new Set<string>();
+  walkExpr(expr);
+  return names;
+
+  function walkExpr(e: Expr) {
+    if ("lit" in e) return;
+    if ("field" in e) return;
+    if ("arith" in e) {
+      walkExpr(e.arith.left);
+      walkExpr(e.arith.right);
+      return;
+    }
+    if ("ite" in e) {
+      walkBoolExpr(e.ite.cond);
+      walkExpr(e.ite.then);
+      walkExpr(e.ite.else);
+      return;
+    }
+    if ("round" in e) {
+      walkExpr(e.round.expr);
+      return;
+    }
+    if ("sum" in e) {
+      walkExpr(e.sum.body);
+      return;
+    }
+  }
+
+  function walkBoolExpr(b: BoolExpr) {
+    if ("cmp" in b) {
+      walkExpr(b.cmp.left);
+      walkExpr(b.cmp.right);
+    } else if ("logic" in b) {
+      walkBoolExpr(b.logic.left);
+      walkBoolExpr(b.logic.right);
+    } else if ("not" in b) {
+      walkBoolExpr(b.not);
+    } else if ("isPresent" in b) {
+      if ("name" in b.isPresent && !("qualifier" in b.isPresent)) {
+        names.add(b.isPresent.name);
+      }
+    }
+  }
 }
 
 function collectFieldNames(expr: Expr): Set<string> {
