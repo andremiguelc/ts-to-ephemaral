@@ -184,6 +184,12 @@ export function extractBoolExpr(
     }
   }
 
+  // Array.prototype.every → BoolExpr.each
+  if (ts.isCallExpression(node)) {
+    const each = tryExtractEvery(node, ctx);
+    if (each) return each;
+  }
+
   // Fallback: wrap an unconstrained param in a trivial comparison
   const param = makeUnconstrained(node, ctx, "unsupported boolean expression");
   return { cmp: { op: "gt", left: param, right: { lit: 0 } } };
@@ -398,6 +404,126 @@ function extractReduceToSum(
   }
 
   return makeUnconstrained(node, ctx, "reduce callback non-sum pattern");
+}
+
+/**
+ * Try to extract `arr.every(item => ...)` as `BoolExpr.each`.
+ * Returns null on any mismatch so the caller can fall back.
+ * Gated on the receiver's apparent type being Array / ReadonlyArray
+ * via the type checker, not on the identifier name "every".
+ */
+function tryExtractEvery(
+  node: ts.CallExpression,
+  ctx: ExtractionContext,
+): BoolExpr | null {
+  if (!ts.isPropertyAccessExpression(node.expression)) return null;
+  const callee = node.expression;
+  if (callee.name.text !== "every") return null;
+
+  const receiverType = ctx.checker.getApparentType(
+    ctx.checker.getTypeAtLocation(callee.expression),
+  );
+  const typeName =
+    receiverType.getSymbol()?.getName() ?? receiverType.aliasSymbol?.getName();
+  if (typeName !== "Array" && typeName !== "ReadonlyArray") return null;
+
+  if (node.arguments.length !== 1) return null;
+  const callback = node.arguments[0];
+  if (!ts.isArrowFunction(callback) && !ts.isFunctionExpression(callback)) {
+    return null;
+  }
+
+  if (callback.parameters.length !== 1) return null;
+  const paramNode = callback.parameters[0];
+  if (!ts.isIdentifier(paramNode.name)) return null;
+  const itemName = paramNode.name.text;
+
+  let collectionName: string | null = null;
+  if (ts.isPropertyAccessExpression(callee.expression)) {
+    collectionName = callee.expression.name.text;
+  } else if (ts.isIdentifier(callee.expression)) {
+    collectionName = callee.expression.text;
+  }
+  if (!collectionName) return null;
+
+  let bodyNode: ts.Expression | undefined;
+  if (ts.isBlock(callback.body)) {
+    const stmts = callback.body.statements;
+    if (
+      stmts.length === 1 &&
+      ts.isReturnStatement(stmts[0]) &&
+      stmts[0].expression
+    ) {
+      bodyNode = stmts[0].expression;
+    }
+  } else {
+    bodyNode = callback.body;
+  }
+  if (!bodyNode) return null;
+
+  const body = extractItemBoolExpr(bodyNode, itemName, ctx);
+  return { each: { collection: collectionName, body } };
+}
+
+/**
+ * Extract a BoolExpr in item scope (inside an every/each body).
+ * Item fields are accessed as item.field → { field: { name: "field" } };
+ * comparison operands go through extractItemExpr.
+ */
+function extractItemBoolExpr(
+  node: ts.Expression,
+  itemParamName: string,
+  ctx: ExtractionContext,
+): BoolExpr {
+  if (ts.isParenthesizedExpression(node)) {
+    return extractItemBoolExpr(node.expression, itemParamName, ctx);
+  }
+
+  if (
+    ts.isPrefixUnaryExpression(node) &&
+    node.operator === ts.SyntaxKind.ExclamationToken
+  ) {
+    return {
+      not: extractItemBoolExpr(node.operand, itemParamName, ctx),
+    };
+  }
+
+  if (ts.isBinaryExpression(node)) {
+    const op = node.operatorToken.kind;
+
+    if (op === ts.SyntaxKind.AmpersandAmpersandToken) {
+      return {
+        logic: {
+          op: "and",
+          left: extractItemBoolExpr(node.left, itemParamName, ctx),
+          right: extractItemBoolExpr(node.right, itemParamName, ctx),
+        },
+      };
+    }
+    if (op === ts.SyntaxKind.BarBarToken) {
+      return {
+        logic: {
+          op: "or",
+          left: extractItemBoolExpr(node.left, itemParamName, ctx),
+          right: extractItemBoolExpr(node.right, itemParamName, ctx),
+        },
+      };
+    }
+
+    const compOp = mapComparisonOp(op);
+    if (compOp) {
+      return {
+        cmp: {
+          op: compOp,
+          left: extractItemExpr(node.left, itemParamName, ctx),
+          right: extractItemExpr(node.right, itemParamName, ctx),
+        },
+      };
+    }
+  }
+
+  const param = makeUnconstrained(node, ctx, "unsupported item boolean");
+  return { cmp: { op: "gt", left: param, right: { lit: 0 } } };
 }
 
 /**

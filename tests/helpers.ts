@@ -181,6 +181,7 @@ function collectQualifiedParamNames(expr: Expr): string[] {
         names.add("has-" + key);
       }
     }
+    else if ("each" in b) { walkBool(b.each.body); }
   }
 }
 
@@ -206,6 +207,7 @@ function collectOptionalFields(expr: Expr): Set<string> {
         names.add(b.isPresent.name);
       }
     }
+    else if ("each" in b) { walkBool(b.each.body); }
   }
 }
 
@@ -233,5 +235,9 @@ function collectFieldNames(expr: Expr): Set<string> {
     else if ("logic" in b) { walkBoolExpr(b.logic.left); walkBoolExpr(b.logic.right); }
     else if ("not" in b) { walkBoolExpr(b.not); }
     else if ("isPresent" in b) { if ("name" in b.isPresent) names.add(b.isPresent.name); }
+    else if ("each" in b) {
+      names.add(b.each.collection);
+      walkBoolExpr(b.each.body);
+    }
   }
 }

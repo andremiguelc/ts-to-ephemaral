@@ -193,6 +193,79 @@ describe("collection sum", () => {
   });
 });
 
+// ─── Collection each / every() ─────────────────────────────────
+
+describe("collection each", () => {
+  it("simple every → each with cmp body", () => {
+    const r = fromOrder("total", "each_simple.ts");
+    const v = getAssign(r);
+    assert.ok("ite" in v);
+    assert.ok("each" in v.ite.cond);
+    assert.equal(v.ite.cond.each.collection, "lineItems");
+    assert.ok("cmp" in v.ite.cond.each.body);
+    assert.equal(v.ite.cond.each.body.cmp.op, "gt");
+    assert.deepStrictEqual(v.ite.cond.each.body.cmp.left, {
+      field: { name: "quantity" },
+    });
+    assert.deepStrictEqual(v.ite.cond.each.body.cmp.right, { lit: 0 });
+  });
+
+  it("compound body (&&) → each with logic.and", () => {
+    const r = fromOrder("total", "each_compound_body.ts");
+    const v = getAssign(r);
+    assert.ok("each" in v.ite.cond);
+    assert.equal(v.ite.cond.each.collection, "lineItems");
+    assert.ok("logic" in v.ite.cond.each.body);
+    assert.equal(v.ite.cond.each.body.logic.op, "and");
+    assert.equal(v.ite.cond.each.body.logic.left.cmp.op, "gt");
+    assert.equal(v.ite.cond.each.body.logic.right.cmp.op, "gte");
+  });
+
+  it("string comparison body → each resolves, string rhs falls to __ext_", () => {
+    const r = fromOrder("total", "each_string_body.ts");
+    const v = getAssign(r);
+    assert.ok("each" in v.ite.cond);
+    assert.equal(v.ite.cond.each.collection, "lineItems");
+    const cmp = v.ite.cond.each.body.cmp;
+    assert.equal(cmp.op, "eq");
+    assert.deepStrictEqual(cmp.left, { field: { name: "productId" } });
+    // String literal becomes an __ext_ field ref
+    assert.ok("field" in cmp.right);
+    assert.ok(cmp.right.field.name.startsWith("__ext_"));
+  });
+
+  it("user-defined every on non-array type → no each, falls to __ext_", () => {
+    const r = fromOrder("total", "each_user_defined_negative.ts");
+    const hasEach = JSON.stringify(r).includes("\"each\"");
+    assert.equal(hasEach, false, "non-Array every must not extract as each");
+    // Should surface as an unconstrained param for the method call
+    assert.ok(
+      r.params.some((p) => p.startsWith("__ext_")),
+      "expected an __ext_ param for the user-defined every call",
+    );
+  });
+
+  it("destructured callback param → no each, falls to __ext_", () => {
+    const r = fromOrder("total", "each_destructured_negative.ts");
+    const hasEach = JSON.stringify(r).includes("\"each\"");
+    assert.equal(hasEach, false, "destructured callback must not extract as each");
+    assert.ok(
+      r.params.some((p) => p.startsWith("__ext_")),
+      "expected an __ext_ param for the unsupported callback shape",
+    );
+  });
+
+  it("two-param callback (item, index) → no each, falls to __ext_", () => {
+    const r = fromOrder("total", "each_two_params_negative.ts");
+    const hasEach = JSON.stringify(r).includes("\"each\"");
+    assert.equal(hasEach, false, "two-param callback must not extract as each");
+    assert.ok(
+      r.params.some((p) => p.startsWith("__ext_")),
+      "expected an __ext_ param for the unsupported callback arity",
+    );
+  });
+});
+
 // ─── Multiple assignments ───────────────────────────────────────
 
 describe("multiple assignments", () => {
