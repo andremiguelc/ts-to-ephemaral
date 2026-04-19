@@ -136,6 +136,11 @@ describe("nullable", () => {
     assert.deepStrictEqual(ite.else, { lit: 0 });
   });
 
+  it("?? on nullable field populates optionalFields", () => {
+    const r = fromOrder("total", "nullable_coalesce.ts");
+    assert.deepStrictEqual(r.optionalFields, ["discount"]);
+  });
+
   it("|| 0 → same as ?? (ite with isPresent)", () => {
     const r = fromOrder("total", "nullable_or_default.ts");
     const v = getAssign(r);
@@ -149,6 +154,21 @@ describe("nullable", () => {
     const r = fromOrder("total", "nullable_nested.ts");
     // Chained ?? (a ?? b ?? 0) is too complex for expression extractor → __unk
     assert.ok(r.params.length > 0, "chained ?? should produce unconstrained params");
+  });
+
+  it("?? on non-nullable field emits bare field, no isPresent", () => {
+    const r = fromOrder("total", "nonnull_coalesce.ts");
+    // Traverse the expression tree for any isPresent — there should be none.
+    const hasIsPresent = JSON.stringify(r).includes("isPresent");
+    assert.equal(hasIsPresent, false, "non-nullable ?? should not emit isPresent");
+    assert.equal(r.optionalFields, undefined, "optionalFields should be absent");
+  });
+
+  it("optional field declared but not branched on stays out of optionalFields", () => {
+    // arith_mul.ts uses Order (which has `discount?: Discount`) but never branches on discount.
+    const r = fromOrder("total", "arith_mul.ts");
+    assert.equal(r.optionalFields, undefined,
+      "optionalFields only lists fields the function actually queries for presence");
   });
 });
 
