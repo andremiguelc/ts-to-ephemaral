@@ -6,7 +6,7 @@
  */
 
 /** Compatible Aral-fn schema version */
-export const ARAL_FN_VERSION = "0.1.1";
+export const ARAL_FN_VERSION = "0.1.2";
 
 export type ArithOp = "add" | "sub" | "mul" | "div";
 export type CompOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte";
