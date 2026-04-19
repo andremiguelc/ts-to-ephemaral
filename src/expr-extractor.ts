@@ -446,6 +446,15 @@ function extractItemExpr(
   return makeUnconstrained(node, ctx, "unsupported item expression");
 }
 
+/** Returns true when the TS type includes `undefined` or `null`. On such types,
+ *  `x ?? default` (or `x || 0`) expresses real presence branching. On non-nullable
+ *  types, the fallback is unreachable and we should emit the bare field ref —
+ *  emitting `isPresent` on a non-optional field produces IR that fails the
+ *  deserializer's consistency check. */
+function typeIsNullable(type: ts.Type, checker: ts.TypeChecker): boolean {
+  return type !== checker.getNonNullableType(type);
+}
+
 function extractNullCoalescing(
   node: ts.BinaryExpression,
   ctx: ExtractionContext,
@@ -453,8 +462,13 @@ function extractNullCoalescing(
   const leftExpr = extractExpr(node.left, ctx);
   const rightExpr = extractExpr(node.right, ctx);
 
-  // x ?? default → ite(isPresent(x), x, default)
+  // x ?? default → ite(isPresent(x), x, default), but only if x's type is nullable.
   if ("field" in leftExpr) {
+    const leftType = ctx.checker.getTypeAtLocation(node.left);
+    if (!typeIsNullable(leftType, ctx.checker)) {
+      // Non-nullable left side: the fallback is unreachable. Emit the bare field.
+      return leftExpr;
+    }
     return {
       ite: {
         cond: { isPresent: leftExpr.field },
