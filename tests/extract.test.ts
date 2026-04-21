@@ -583,6 +583,25 @@ describe("call-chain inlining — single-return function shapes", () => {
   });
 });
 
+describe("call-chain inlining — const-binding callee body", () => {
+  it("resolves a leading `const` in the callee body via tryTraceLocal", () => {
+    // taxedTotal(subtotal, pct):
+    //   const rate = pct / 100;
+    //   return subtotal * rate;
+    // Called as taxedTotal(order.subtotal, pct). Expected IR:
+    //   arith(mul, field(subtotal), arith(div, field(pct), lit(100)))
+    const r = fromOrder("total", "call_const_binding.ts");
+    const v = getAssign(r);
+
+    assert.equal(v.arith?.op, "mul");
+    assert.deepStrictEqual(v.arith.left, { field: { name: "subtotal" } });
+    assert.equal(v.arith.right.arith?.op, "div");
+    assert.deepStrictEqual(v.arith.right.arith.left, { field: { name: "pct" } });
+    assert.deepStrictEqual(v.arith.right.arith.right, { lit: 100 });
+    assert.equal(r.unconstrainedCount, 0, "no unconstrained params expected");
+  });
+});
+
 describe("call-chain inlining — guard-chain body", () => {
   it("lifts `if-return; if-return; return` callee body to nested ite", () => {
     // clamp(x, lo, hi) with two guards and a fallback return, called as

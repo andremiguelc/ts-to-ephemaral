@@ -559,9 +559,13 @@ function resolveCalleeShape(
  *   - Block with `{ return <expr>; }`
  *   - Block shaped like `if (G1) return E1; if (G2) return E2; return Ef;` —
  *     lifted to nested `ite(G1, E1, ite(G2, E2, Ef))` (Phase 3).
- * Returns null for block shapes we don't handle yet (multi-statement with
- * const-bindings, throws in non-guard positions, loops) — the caller falls
- * through to the outer unconstrained path.
+ *   - Block with leading `const y = …;` bindings followed by guards and a
+ *     final return (Phase 4). The consts resolve implicitly via tryTraceLocal
+ *     when the return expression references them — no explicit IR node is
+ *     emitted for the binding itself.
+ * Returns null for block shapes we don't handle yet (let/var reassignments,
+ * throws in non-guard positions, loops) — the caller falls through to the
+ * outer unconstrained path.
  */
 function extractCalleeBody(
   body: ts.ConciseBody,
@@ -573,11 +577,16 @@ function extractCalleeBody(
   const stmts = body.statements;
   if (stmts.length === 0) return null;
 
-  // Collect leading `if (G) return E;` guards; the last statement must be a
-  // plain `return Ef;`. Anything else in the leading positions bails.
+  // Leading statements may be either a pure `const` binding (skipped — the
+  // existing symbol tracer handles references to it) or an `if-return` guard.
   const guards: Array<{ cond: BoolExpr; early: Expr }> = [];
   for (let i = 0; i < stmts.length - 1; i++) {
-    const g = matchCalleeReturnGuard(stmts[i], ctx);
+    const stmt = stmts[i];
+    if (ts.isVariableStatement(stmt)) {
+      if (!isPureConstBinding(stmt)) return null;
+      continue;
+    }
+    const g = matchCalleeReturnGuard(stmt, ctx);
     if (!g) return null;
     guards.push(g);
   }
@@ -593,6 +602,23 @@ function extractCalleeBody(
     result = { ite: { cond, then: early, else: result } };
   }
   return result;
+}
+
+/**
+ * Recognize a `const y = <expr>;` statement with one or more simple-named
+ * bindings, each with an initializer. References to these names in the rest
+ * of the callee body resolve via the existing tryTraceLocal symbol tracer,
+ * so we don't need to emit any IR for the declaration itself — we just
+ * tolerate it being present in the block.
+ */
+function isPureConstBinding(stmt: ts.VariableStatement): boolean {
+  const declList = stmt.declarationList;
+  if ((declList.flags & ts.NodeFlags.Const) === 0) return false;
+  for (const decl of declList.declarations) {
+    if (!decl.initializer) return false;
+    if (!ts.isIdentifier(decl.name)) return false; // no destructuring yet
+  }
+  return true;
 }
 
 /**
