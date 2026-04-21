@@ -420,14 +420,23 @@ function extractCallExpr(
  * makeUnconstrained path); an unconstrained IR when we identified the callee
  * but refuse to inline (external, recursive).
  */
+const MAX_CALL_DEPTH = 64;
+
 function tryInlineCallChain(
   node: ts.CallExpression,
   ctx: ExtractionContext,
 ): Expr | null {
-  if (ctx._callDepth >= 1) return null;
-
   const callee = node.expression as ts.Identifier;
   const calleeName = callee.text;
+
+  if (ctx._callDepth >= MAX_CALL_DEPTH) {
+    return makeUnconstrained(
+      node,
+      ctx,
+      `call chain depth exceeded at '${calleeName}' — consider inlining one level by hand`,
+    );
+  }
+
   const symbol = ctx.checker.getSymbolAtLocation(callee);
   if (!symbol) return null;
 

@@ -602,6 +602,34 @@ describe("call-chain inlining — const-binding callee body", () => {
   });
 });
 
+describe("call-chain inlining — nested calls", () => {
+  it("composes two levels: outer(x) where outer body calls inner(x)", () => {
+    // inner(x) = x + 1; outer(x) = inner(x) * 2; total = outer(order.subtotal)
+    // Expected IR: arith(mul, arith(add, field(subtotal), lit(1)), lit(2))
+    const r = fromOrder("total", "call_nested.ts");
+    const v = getAssign(r);
+
+    assert.equal(v.arith?.op, "mul");
+    assert.deepStrictEqual(v.arith.right, { lit: 2 });
+    assert.equal(v.arith.left.arith?.op, "add");
+    assert.deepStrictEqual(v.arith.left.arith.left, { field: { name: "subtotal" } });
+    assert.deepStrictEqual(v.arith.left.arith.right, { lit: 1 });
+    assert.equal(r.unconstrainedCount, 0, "no unconstrained params expected");
+  });
+});
+
+describe("call-chain inlining — direct recursion bails via cycle guard", () => {
+  it("recursive self-call becomes an unconstrained param named after the callee", () => {
+    // countdown(x) = countdown(x - 1); total = countdown(order.subtotal)
+    const r = fromOrder("total", "call_recursive.ts");
+    assert.equal(r.unconstrainedCount, 1,
+      `expected one unconstrained (the recursive call), got ${r.unconstrainedCount}`);
+    const paramName = r.params.find((p) => p.startsWith("__ext_"));
+    assert.ok(paramName?.includes("countdown"),
+      `expected __ext_ param to mention 'countdown', got '${paramName}'`);
+  });
+});
+
 describe("call-chain inlining — guard-chain body", () => {
   it("lifts `if-return; if-return; return` callee body to nested ite", () => {
     // clamp(x, lo, hi) with two guards and a fallback return, called as
