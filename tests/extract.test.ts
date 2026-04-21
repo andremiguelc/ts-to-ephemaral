@@ -583,6 +583,38 @@ describe("call-chain inlining — single-return function shapes", () => {
   });
 });
 
+describe("call-chain inlining — guard-chain body", () => {
+  it("lifts `if-return; if-return; return` callee body to nested ite", () => {
+    // clamp(x, lo, hi) with two guards and a fallback return, called as
+    // clamp(order.subtotal, 0, 1000). Expected IR structure:
+    //   ite(cmp(lt, subtotal, 0),
+    //       0,
+    //       ite(cmp(gt, subtotal, 1000),
+    //           1000,
+    //           subtotal))
+    const r = fromOrder("total", "call_clamp.ts");
+    const v = getAssign(r);
+
+    assert.ok("ite" in v, `expected ite, got ${JSON.stringify(v)}`);
+    // Outer guard: x < lo → lo
+    assert.equal(v.ite.cond.cmp?.op, "lt");
+    assert.deepStrictEqual(v.ite.cond.cmp.left, { field: { name: "subtotal" } });
+    assert.deepStrictEqual(v.ite.cond.cmp.right, { lit: 0 });
+    assert.deepStrictEqual(v.ite.then, { lit: 0 });
+
+    // Nested guard: x > hi → hi
+    const inner = v.ite.else;
+    assert.ok("ite" in inner, `expected nested ite, got ${JSON.stringify(inner)}`);
+    assert.equal(inner.ite.cond.cmp?.op, "gt");
+    assert.deepStrictEqual(inner.ite.cond.cmp.left, { field: { name: "subtotal" } });
+    assert.deepStrictEqual(inner.ite.cond.cmp.right, { lit: 1000 });
+    assert.deepStrictEqual(inner.ite.then, { lit: 1000 });
+    assert.deepStrictEqual(inner.ite.else, { field: { name: "subtotal" } });
+
+    assert.equal(r.unconstrainedCount, 0, "no unconstrained params expected");
+  });
+});
+
 // ─── Multi-site extraction ──────────────────────────────────────
 
 describe("multi-site extraction", () => {

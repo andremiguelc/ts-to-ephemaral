@@ -471,12 +471,13 @@ function tryInlineCallChain(
     );
   }
 
-  // Resolve the callee to (params, body-expression).
+  // Resolve the callee to (params, raw body node). Body-shape analysis lives
+  // downstream in extractCalleeBody so each phase widens one layer.
   const shape = resolveCalleeShape(decl);
   if (!shape) return null;
-  const { params, bodyExpr } = shape;
+  const { params, body: calleeBody } = shape;
 
-  // Cycle guard. With depth capped at 1 in Phase 1/2 this can't fire yet,
+  // Cycle guard. With depth capped at 1 in Phase 1/2/3 this can't fire yet,
   // but the scaffolding is in place so Phase 5 needs no further wiring.
   if (ctx._tracingCallSymbols.has(resolvedSymbol)) {
     return makeUnconstrained(
@@ -513,60 +514,110 @@ function tryInlineCallChain(
   ctx._tracingCallSymbols.add(resolvedSymbol);
   ctx._callDepth += 1;
 
-  const body = extractExpr(bodyExpr, ctx);
+  const body = extractCalleeBody(calleeBody, ctx);
 
   // Restore caller scope.
   ctx.paramSubstitution = priorSubstitution;
   ctx._tracingCallSymbols.delete(resolvedSymbol);
   ctx._callDepth -= 1;
 
+  // If the body shape wasn't one we can inline, fall through to the outer
+  // makeUnconstrained path rather than emitting a partial IR.
   return body;
 }
 
 /**
- * Map a callee's declaration node to its (parameters, body-expression) pair,
- * if the declaration's shape is one we know how to inline. Returns null for
- * unsupported shapes (methods, constructors, multi-statement bodies without
- * a single-return pattern). Each future phase widens this function's reach.
+ * Map a callee's declaration node to its (parameters, raw body) pair, if the
+ * declaration's shape is one we can inspect. Returns null for unsupported
+ * shapes (methods, constructors). Body-shape decisions happen in
+ * extractCalleeBody, not here.
  */
 function resolveCalleeShape(
   decl: ts.Declaration,
-): { params: ReadonlyArray<ts.ParameterDeclaration>; bodyExpr: ts.Expression } | null {
+): { params: ReadonlyArray<ts.ParameterDeclaration>; body: ts.ConciseBody } | null {
   // `const f = (...) => ...` or `const f = function(...) { ... }`
   if (ts.isVariableDeclaration(decl) && decl.initializer) {
     const init = decl.initializer;
     if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
-      const bodyExpr = unwrapReturnBody(init.body);
-      if (!bodyExpr) return null;
-      return { params: init.parameters, bodyExpr };
+      return { params: init.parameters, body: init.body };
     }
     return null;
   }
 
   // `function f(...) { return ...; }` (named function declaration)
   if (ts.isFunctionDeclaration(decl) && decl.body) {
-    const bodyExpr = unwrapReturnBody(decl.body);
-    if (!bodyExpr) return null;
-    return { params: decl.parameters, bodyExpr };
+    return { params: decl.parameters, body: decl.body };
   }
 
   return null;
 }
 
 /**
- * Pull the return-expression out of a function body.
- *   - Arrow expression body (`=> x * 2`) → the expression itself.
- *   - Block body with exactly `{ return <expr>; }` → that expression.
- *   - Anything else (multi-statement blocks, guard chains, loops) → null.
- *     Those shapes are handled by later phases (guard-chains in Phase 3,
- *     const-bindings in Phase 4).
+ * Extract the return-value IR from a callee body, in the caller's current
+ * paramSubstitution scope. Supported shapes:
+ *   - Arrow expression body (`=> x * 2`)
+ *   - Block with `{ return <expr>; }`
+ *   - Block shaped like `if (G1) return E1; if (G2) return E2; return Ef;` —
+ *     lifted to nested `ite(G1, E1, ite(G2, E2, Ef))` (Phase 3).
+ * Returns null for block shapes we don't handle yet (multi-statement with
+ * const-bindings, throws in non-guard positions, loops) — the caller falls
+ * through to the outer unconstrained path.
  */
-function unwrapReturnBody(body: ts.ConciseBody): ts.Expression | null {
-  if (!ts.isBlock(body)) return body;
-  if (body.statements.length !== 1) return null;
-  const stmt = body.statements[0];
-  if (!ts.isReturnStatement(stmt) || !stmt.expression) return null;
-  return stmt.expression;
+function extractCalleeBody(
+  body: ts.ConciseBody,
+  ctx: ExtractionContext,
+): Expr | null {
+  // Arrow expression body: extract directly.
+  if (!ts.isBlock(body)) return extractExpr(body, ctx);
+
+  const stmts = body.statements;
+  if (stmts.length === 0) return null;
+
+  // Collect leading `if (G) return E;` guards; the last statement must be a
+  // plain `return Ef;`. Anything else in the leading positions bails.
+  const guards: Array<{ cond: BoolExpr; early: Expr }> = [];
+  for (let i = 0; i < stmts.length - 1; i++) {
+    const g = matchCalleeReturnGuard(stmts[i], ctx);
+    if (!g) return null;
+    guards.push(g);
+  }
+
+  const last = stmts[stmts.length - 1];
+  if (!ts.isReturnStatement(last) || !last.expression) return null;
+  const tail = extractExpr(last.expression, ctx);
+
+  // Fold innermost → outermost so the first guard wraps the outermost `ite`.
+  let result = tail;
+  for (let i = guards.length - 1; i >= 0; i--) {
+    const { cond, early } = guards[i];
+    result = { ite: { cond, then: early, else: result } };
+  }
+  return result;
+}
+
+/**
+ * Match an `if (G) return E;` statement inside a callee body (bare or single-
+ * statement block). No else branches, no throws, no other wrappers. Returns
+ * null for anything else so the caller can bail on the body shape.
+ */
+function matchCalleeReturnGuard(
+  stmt: ts.Statement,
+  ctx: ExtractionContext,
+): { cond: BoolExpr; early: Expr } | null {
+  if (!ts.isIfStatement(stmt)) return null;
+  if (stmt.elseStatement) return null;
+
+  let inner: ts.Statement = stmt.thenStatement;
+  if (ts.isBlock(inner)) {
+    if (inner.statements.length !== 1) return null;
+    inner = inner.statements[0];
+  }
+
+  if (!ts.isReturnStatement(inner) || !inner.expression) return null;
+
+  const cond = extractBoolExpr(stmt.expression, ctx);
+  const early = extractExpr(inner.expression, ctx);
+  return { cond, early };
 }
 
 function extractReduceToSum(
