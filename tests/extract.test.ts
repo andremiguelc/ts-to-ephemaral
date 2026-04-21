@@ -563,6 +563,26 @@ describe("call-chain inlining — expression-body arrow", () => {
   });
 });
 
+describe("call-chain inlining — single-return function shapes", () => {
+  it("inlines function f(x) { return x * 2; } at the call site", () => {
+    const r = fromOrder("total", "call_fn_decl.ts");
+    const v = getAssign(r);
+    assert.equal(v.arith?.op, "mul", `expected arith mul, got ${JSON.stringify(v)}`);
+    assert.deepStrictEqual(v.arith.left, { field: { name: "subtotal" } });
+    assert.deepStrictEqual(v.arith.right, { lit: 2 });
+    assert.equal(r.unconstrainedCount, 0, "no unconstrained params expected");
+  });
+
+  it("inlines const f = (x) => { return x * 2; } at the call site", () => {
+    const r = fromOrder("total", "call_arrow_block.ts");
+    const v = getAssign(r);
+    assert.equal(v.arith?.op, "mul", `expected arith mul, got ${JSON.stringify(v)}`);
+    assert.deepStrictEqual(v.arith.left, { field: { name: "subtotal" } });
+    assert.deepStrictEqual(v.arith.right, { lit: 2 });
+    assert.equal(r.unconstrainedCount, 0, "no unconstrained params expected");
+  });
+});
+
 // ─── Multi-site extraction ──────────────────────────────────────
 
 describe("multi-site extraction", () => {

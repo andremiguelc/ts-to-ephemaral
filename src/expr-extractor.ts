@@ -415,20 +415,21 @@ function extractCallExpr(
 }
 
 /**
- * Phase 1 of call-chain following. Handles the simplest shape:
- *   const f = (x, y, ...) => <expr>
- *   ...
- *   out.field = f(a, b, ...)
+ * Call-chain following (v0.3.0). Supports these callee shapes:
+ *   Phase 1:  const f = (x, y, ...) => <expr>
+ *   Phase 2:  const f = (x) => { return <expr>; }
+ *             const f = function(x) { return <expr>; }
+ *             function f(x) { return <expr>; }
  *
  * Extracts each argument in the caller's context, binds the callee's param
  * symbols to those IRs via ctx.paramSubstitution, then extracts the callee's
- * expression body. The body's references to callee params route through the
+ * return expression. References to callee params route through the
  * substitution and compose into the caller's tree as one continuous IR.
  *
  * Returns:
  *   - the inlined IR on success
- *   - null if the shape doesn't match this phase (caller falls through to
- *     the existing makeUnconstrained path)
+ *   - null if the shape doesn't match what we can inline (caller falls
+ *     through to the existing makeUnconstrained path)
  *   - an unconstrained IR with a specific reason when we can identify the
  *     callee but refuse to inline (external, cycle, depth cap)
  */
@@ -436,8 +437,8 @@ function tryInlineCallChain(
   node: ts.CallExpression,
   ctx: ExtractionContext,
 ): Expr | null {
-  // Phase 1 only inlines at the top level. Inside an already-inlined callee
-  // body, nested calls keep today's fallthrough until Phase 5 activates depth.
+  // Phase 1/2 cap: only inline at the top level. Nested calls keep today's
+  // fallthrough until Phase 5 lifts the cap and relies on _tracingCallSymbols.
   if (ctx._callDepth >= 1) return null;
 
   const callee = node.expression as ts.Identifier;
@@ -470,14 +471,12 @@ function tryInlineCallChain(
     );
   }
 
-  // Phase 1 shape: `const f = (...) => <expr>`.
-  if (!ts.isVariableDeclaration(decl) || !decl.initializer) return null;
-  const init = decl.initializer;
-  if (!ts.isArrowFunction(init)) return null;
-  // Expression body only. Block bodies land in Phase 2.
-  if (ts.isBlock(init.body)) return null;
+  // Resolve the callee to (params, body-expression).
+  const shape = resolveCalleeShape(decl);
+  if (!shape) return null;
+  const { params, bodyExpr } = shape;
 
-  // Cycle guard. With depth capped at 1 this branch cannot fire in Phase 1,
+  // Cycle guard. With depth capped at 1 in Phase 1/2 this can't fire yet,
   // but the scaffolding is in place so Phase 5 needs no further wiring.
   if (ctx._tracingCallSymbols.has(resolvedSymbol)) {
     return makeUnconstrained(
@@ -488,7 +487,6 @@ function tryInlineCallChain(
   }
 
   // Arity and param-shape checks.
-  const params = init.parameters;
   if (node.arguments.length !== params.length) return null;
   const paramSymbols: ts.Symbol[] = [];
   for (const p of params) {
@@ -515,7 +513,7 @@ function tryInlineCallChain(
   ctx._tracingCallSymbols.add(resolvedSymbol);
   ctx._callDepth += 1;
 
-  const body = extractExpr(init.body as ts.Expression, ctx);
+  const body = extractExpr(bodyExpr, ctx);
 
   // Restore caller scope.
   ctx.paramSubstitution = priorSubstitution;
@@ -523,6 +521,52 @@ function tryInlineCallChain(
   ctx._callDepth -= 1;
 
   return body;
+}
+
+/**
+ * Map a callee's declaration node to its (parameters, body-expression) pair,
+ * if the declaration's shape is one we know how to inline. Returns null for
+ * unsupported shapes (methods, constructors, multi-statement bodies without
+ * a single-return pattern). Each future phase widens this function's reach.
+ */
+function resolveCalleeShape(
+  decl: ts.Declaration,
+): { params: ReadonlyArray<ts.ParameterDeclaration>; bodyExpr: ts.Expression } | null {
+  // `const f = (...) => ...` or `const f = function(...) { ... }`
+  if (ts.isVariableDeclaration(decl) && decl.initializer) {
+    const init = decl.initializer;
+    if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
+      const bodyExpr = unwrapReturnBody(init.body);
+      if (!bodyExpr) return null;
+      return { params: init.parameters, bodyExpr };
+    }
+    return null;
+  }
+
+  // `function f(...) { return ...; }` (named function declaration)
+  if (ts.isFunctionDeclaration(decl) && decl.body) {
+    const bodyExpr = unwrapReturnBody(decl.body);
+    if (!bodyExpr) return null;
+    return { params: decl.parameters, bodyExpr };
+  }
+
+  return null;
+}
+
+/**
+ * Pull the return-expression out of a function body.
+ *   - Arrow expression body (`=> x * 2`) → the expression itself.
+ *   - Block body with exactly `{ return <expr>; }` → that expression.
+ *   - Anything else (multi-statement blocks, guard chains, loops) → null.
+ *     Those shapes are handled by later phases (guard-chains in Phase 3,
+ *     const-bindings in Phase 4).
+ */
+function unwrapReturnBody(body: ts.ConciseBody): ts.Expression | null {
+  if (!ts.isBlock(body)) return body;
+  if (body.statements.length !== 1) return null;
+  const stmt = body.statements[0];
+  if (!ts.isReturnStatement(stmt) || !stmt.expression) return null;
+  return stmt.expression;
 }
 
 function extractReduceToSum(
