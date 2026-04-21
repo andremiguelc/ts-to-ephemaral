@@ -51,6 +51,8 @@ export interface ExtractionContext {
   _tracingCallSymbols: Set<ts.Symbol>;
   /** Current nesting depth of call-chain inlining (cycle/cost guard). */
   _callDepth: number;
+  /** Total IR node count produced via call-chain inlining at this site. */
+  _callSize: number;
 }
 
 export function createContext(
@@ -76,6 +78,7 @@ export function createContext(
     paramSubstitution: new Map(),
     _tracingCallSymbols: new Set(),
     _callDepth: 0,
+    _callSize: 0,
   };
 }
 
@@ -409,7 +412,38 @@ function extractCallExpr(
     if (inlined !== null) return inlined;
   }
 
-  return makeUnconstrained(node, ctx, "function call");
+  // Property-access callees that survived the Math / .reduce / .every checks
+  // above are methods we don't know how to follow. Name them explicitly so
+  // the diagnostic points at the method, not "function call".
+  if (ts.isPropertyAccessExpression(node.expression)) {
+    const method = node.expression.name.text;
+    return makeUnconstrained(
+      node,
+      ctx,
+      `method call '.${method}()' — method bodies aren't inlined yet; consider extracting to a free function`,
+    );
+  }
+
+  if (ts.isIdentifier(node.expression)) {
+    const calleeName = node.expression.text;
+    return makeUnconstrained(
+      node,
+      ctx,
+      `callee '${calleeName}' shape not inlineable — a helper of the form \`function ${calleeName}(...) { return <expr>; }\` would inline`,
+    );
+  }
+
+  return makeUnconstrained(node, ctx, "call expression with a non-identifier callee");
+}
+
+const MAX_CALL_DEPTH = readPositiveIntEnv("EPHEMARAL_CALL_DEPTH_MAX", 64);
+const MAX_CALL_SIZE = readPositiveIntEnv("EPHEMARAL_CALL_SIZE_MAX", 10_000);
+
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
 /**
@@ -418,10 +452,8 @@ function extractCallExpr(
  * argument IRs. Returns the inlined IR on success; null if the callee's
  * shape is one we don't handle (the caller then falls through to the outer
  * makeUnconstrained path); an unconstrained IR when we identified the callee
- * but refuse to inline (external, recursive).
+ * but refuse to inline (external, recursive, depth or size cap hit).
  */
-const MAX_CALL_DEPTH = 64;
-
 function tryInlineCallChain(
   node: ts.CallExpression,
   ctx: ExtractionContext,
@@ -433,7 +465,15 @@ function tryInlineCallChain(
     return makeUnconstrained(
       node,
       ctx,
-      `call chain depth exceeded at '${calleeName}' — consider inlining one level by hand`,
+      `call chain depth exceeded at '${calleeName}' — flatten the helper stack or inline one level by hand`,
+    );
+  }
+
+  if (ctx._callSize >= MAX_CALL_SIZE) {
+    return makeUnconstrained(
+      node,
+      ctx,
+      `call chain IR size exceeded at '${calleeName}' — simplify the helper chain or split the site`,
     );
   }
 
@@ -508,7 +548,36 @@ function tryInlineCallChain(
   ctx._tracingCallSymbols.delete(resolvedSymbol);
   ctx._callDepth -= 1;
 
+  if (body !== null) ctx._callSize += countExprNodes(body);
   return body;
+}
+
+function countExprNodes(e: Expr): number {
+  let n = 1;
+  if ("arith" in e) {
+    n += countExprNodes(e.arith.left) + countExprNodes(e.arith.right);
+  } else if ("ite" in e) {
+    n += countBoolExprNodes(e.ite.cond) + countExprNodes(e.ite.then) + countExprNodes(e.ite.else);
+  } else if ("round" in e) {
+    n += countExprNodes(e.round.expr);
+  } else if ("sum" in e) {
+    n += countExprNodes(e.sum.body);
+  }
+  return n;
+}
+
+function countBoolExprNodes(b: BoolExpr): number {
+  let n = 1;
+  if ("cmp" in b) {
+    n += countExprNodes(b.cmp.left) + countExprNodes(b.cmp.right);
+  } else if ("logic" in b) {
+    n += countBoolExprNodes(b.logic.left) + countBoolExprNodes(b.logic.right);
+  } else if ("not" in b) {
+    n += countBoolExprNodes(b.not);
+  } else if ("each" in b) {
+    n += countBoolExprNodes(b.each.body);
+  }
+  return n;
 }
 
 /**
