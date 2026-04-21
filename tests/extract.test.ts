@@ -548,6 +548,21 @@ describe("__ext_ unconstrained naming", () => {
   });
 });
 
+// ─── Call-chain following (v0.3.0) ──────────────────────────────
+
+describe("call-chain inlining — expression-body arrow", () => {
+  it("inlines const f = (x) => x * 2 at the call site", () => {
+    // const doubleIt = (x) => x * 2; out.total = doubleIt(order.subtotal)
+    const r = fromOrder("total", "call_arrow_expr.ts");
+    const v = getAssign(r);
+    // Expected IR: arith(mul, field(subtotal), lit(2))
+    assert.equal(v.arith?.op, "mul", `expected arith mul, got ${JSON.stringify(v)}`);
+    assert.deepStrictEqual(v.arith.left, { field: { name: "subtotal" } });
+    assert.deepStrictEqual(v.arith.right, { lit: 2 });
+    assert.equal(r.unconstrainedCount, 0, "no unconstrained params expected");
+  });
+});
+
 // ─── Multi-site extraction ──────────────────────────────────────
 
 describe("multi-site extraction", () => {

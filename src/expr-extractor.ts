@@ -42,6 +42,16 @@ export interface ExtractionContext {
   _tracingSymbols: Set<ts.Symbol>;
   /** Override for self-references in reassignment RHS (maps to prior value) */
   _selfRefOverride: { symbol: ts.Symbol; expr: Expr } | null;
+  /** Callee-param substitution: during call-chain inlining, maps a callee
+   *  parameter's symbol to the caller's pre-extracted argument IR. Checked
+   *  at the top of extractIdentifier before field/param resolution. */
+  paramSubstitution: Map<ts.Symbol, Expr>;
+  /** Callee symbols currently being inlined (cycle detection for calls).
+   *  Distinct from _tracingSymbols which tracks local variable tracing. */
+  _tracingCallSymbols: Set<ts.Symbol>;
+  /** Current nesting depth of call-chain inlining. Phase 1 caps this at 1;
+   *  later phases raise the cap and enforce it as a cost guard. */
+  _callDepth: number;
 }
 
 export function createContext(
@@ -64,6 +74,9 @@ export function createContext(
     functionParams: new Set(),
     _tracingSymbols: new Set(),
     _selfRefOverride: null,
+    paramSubstitution: new Map(),
+    _tracingCallSymbols: new Set(),
+    _callDepth: 0,
   };
 }
 
@@ -285,6 +298,15 @@ function extractPropertyAccess(
 
 function extractIdentifier(node: ts.Identifier, ctx: ExtractionContext): Expr {
   const name = node.text;
+  const symbol = ctx.checker.getSymbolAtLocation(node);
+
+  // Callee-param substitution: during call-chain inlining, a reference to a
+  // callee parameter resolves to the caller's pre-extracted argument IR.
+  // Checked before anything else so a callee param never falls through to
+  // the caller's fieldNames (which would mis-route if the names coincide).
+  if (symbol && ctx.paramSubstitution.has(symbol)) {
+    return ctx.paramSubstitution.get(symbol)!;
+  }
 
   // Known field on the type → direct field reference
   if (ctx.fieldNames.has(name)) {
@@ -292,7 +314,6 @@ function extractIdentifier(node: ts.Identifier, ctx: ExtractionContext): Expr {
   }
 
   // Try to resolve via symbol — trace local variables back to their initializers
-  const symbol = ctx.checker.getSymbolAtLocation(node);
   if (symbol) {
     const resolved = tryTraceLocal(symbol, node, ctx);
     if (resolved) return resolved;
@@ -384,7 +405,124 @@ function extractCallExpr(
     }
   }
 
+  // Phase 1: bare-identifier callee resolving to an arrow with expression body.
+  if (ts.isIdentifier(node.expression)) {
+    const inlined = tryInlineCallChain(node, ctx);
+    if (inlined !== null) return inlined;
+  }
+
   return makeUnconstrained(node, ctx, "function call");
+}
+
+/**
+ * Phase 1 of call-chain following. Handles the simplest shape:
+ *   const f = (x, y, ...) => <expr>
+ *   ...
+ *   out.field = f(a, b, ...)
+ *
+ * Extracts each argument in the caller's context, binds the callee's param
+ * symbols to those IRs via ctx.paramSubstitution, then extracts the callee's
+ * expression body. The body's references to callee params route through the
+ * substitution and compose into the caller's tree as one continuous IR.
+ *
+ * Returns:
+ *   - the inlined IR on success
+ *   - null if the shape doesn't match this phase (caller falls through to
+ *     the existing makeUnconstrained path)
+ *   - an unconstrained IR with a specific reason when we can identify the
+ *     callee but refuse to inline (external, cycle, depth cap)
+ */
+function tryInlineCallChain(
+  node: ts.CallExpression,
+  ctx: ExtractionContext,
+): Expr | null {
+  // Phase 1 only inlines at the top level. Inside an already-inlined callee
+  // body, nested calls keep today's fallthrough until Phase 5 activates depth.
+  if (ctx._callDepth >= 1) return null;
+
+  const callee = node.expression as ts.Identifier;
+  const calleeName = callee.text;
+  const symbol = ctx.checker.getSymbolAtLocation(callee);
+  if (!symbol) return null;
+
+  // Follow through import aliases to the underlying declaration symbol.
+  const resolvedSymbol =
+    (symbol.flags & ts.SymbolFlags.Alias) !== 0
+      ? ctx.checker.getAliasedSymbol(symbol)
+      : symbol;
+
+  const decl = resolvedSymbol.valueDeclaration;
+  if (!decl) {
+    return makeUnconstrained(
+      node,
+      ctx,
+      `external function '${calleeName}' — no source in project to follow`,
+    );
+  }
+
+  // Declarations in ambient .d.ts (standard lib, third-party types) have no
+  // body we can read. Flag with a specific reason.
+  if (decl.getSourceFile().isDeclarationFile) {
+    return makeUnconstrained(
+      node,
+      ctx,
+      `external function '${calleeName}' — declared in ambient .d.ts, no body to follow`,
+    );
+  }
+
+  // Phase 1 shape: `const f = (...) => <expr>`.
+  if (!ts.isVariableDeclaration(decl) || !decl.initializer) return null;
+  const init = decl.initializer;
+  if (!ts.isArrowFunction(init)) return null;
+  // Expression body only. Block bodies land in Phase 2.
+  if (ts.isBlock(init.body)) return null;
+
+  // Cycle guard. With depth capped at 1 this branch cannot fire in Phase 1,
+  // but the scaffolding is in place so Phase 5 needs no further wiring.
+  if (ctx._tracingCallSymbols.has(resolvedSymbol)) {
+    return makeUnconstrained(
+      node,
+      ctx,
+      `recursive call '${calleeName}' — cycles not followed; consider a bounded iteration form`,
+    );
+  }
+
+  // Arity and param-shape checks.
+  const params = init.parameters;
+  if (node.arguments.length !== params.length) return null;
+  const paramSymbols: ts.Symbol[] = [];
+  for (const p of params) {
+    if (!ts.isIdentifier(p.name)) return null; // no destructured params yet
+    if (p.dotDotDotToken) return null; // no rest params yet
+    const s = ctx.checker.getSymbolAtLocation(p.name);
+    if (!s) return null;
+    paramSymbols.push(s);
+  }
+
+  // Extract each argument in the *caller's* current context. This runs
+  // before we mutate ctx so the args see whatever scope the call site is in.
+  const argExprs: Expr[] = node.arguments.map((a) =>
+    extractExpr(a as ts.Expression, ctx),
+  );
+
+  // Enter callee scope.
+  const priorSubstitution = ctx.paramSubstitution;
+  const nextSubstitution = new Map(priorSubstitution);
+  for (let i = 0; i < paramSymbols.length; i++) {
+    nextSubstitution.set(paramSymbols[i], argExprs[i]);
+  }
+  ctx.paramSubstitution = nextSubstitution;
+  ctx._tracingCallSymbols.add(resolvedSymbol);
+  ctx._callDepth += 1;
+
+  const body = extractExpr(init.body as ts.Expression, ctx);
+
+  // Restore caller scope.
+  ctx.paramSubstitution = priorSubstitution;
+  ctx._tracingCallSymbols.delete(resolvedSymbol);
+  ctx._callDepth -= 1;
+
+  return body;
 }
 
 function extractReduceToSum(
