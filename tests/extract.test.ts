@@ -548,7 +548,7 @@ describe("__ext_ unconstrained naming", () => {
   });
 });
 
-// ─── Call-chain following (v0.3.0) ──────────────────────────────
+// ─── Call-chain following ───────────────────────────────────────
 
 describe("call-chain inlining — expression-body arrow", () => {
   it("inlines const f = (x) => x * 2 at the call site", () => {

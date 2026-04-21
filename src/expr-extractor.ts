@@ -49,8 +49,7 @@ export interface ExtractionContext {
   /** Callee symbols currently being inlined (cycle detection for calls).
    *  Distinct from _tracingSymbols which tracks local variable tracing. */
   _tracingCallSymbols: Set<ts.Symbol>;
-  /** Current nesting depth of call-chain inlining. Phase 1 caps this at 1;
-   *  later phases raise the cap and enforce it as a cost guard. */
+  /** Current nesting depth of call-chain inlining (cycle/cost guard). */
   _callDepth: number;
 }
 
@@ -405,7 +404,6 @@ function extractCallExpr(
     }
   }
 
-  // Phase 1: bare-identifier callee resolving to an arrow with expression body.
   if (ts.isIdentifier(node.expression)) {
     const inlined = tryInlineCallChain(node, ctx);
     if (inlined !== null) return inlined;
@@ -415,30 +413,17 @@ function extractCallExpr(
 }
 
 /**
- * Call-chain following (v0.3.0). Supports these callee shapes:
- *   Phase 1:  const f = (x, y, ...) => <expr>
- *   Phase 2:  const f = (x) => { return <expr>; }
- *             const f = function(x) { return <expr>; }
- *             function f(x) { return <expr>; }
- *
- * Extracts each argument in the caller's context, binds the callee's param
- * symbols to those IRs via ctx.paramSubstitution, then extracts the callee's
- * return expression. References to callee params route through the
- * substitution and compose into the caller's tree as one continuous IR.
- *
- * Returns:
- *   - the inlined IR on success
- *   - null if the shape doesn't match what we can inline (caller falls
- *     through to the existing makeUnconstrained path)
- *   - an unconstrained IR with a specific reason when we can identify the
- *     callee but refuse to inline (external, cycle, depth cap)
+ * Try to inline a call at the current site by extracting the callee's body
+ * as an IR subtree and substituting the callee's parameters with the caller's
+ * argument IRs. Returns the inlined IR on success; null if the callee's
+ * shape is one we don't handle (the caller then falls through to the outer
+ * makeUnconstrained path); an unconstrained IR when we identified the callee
+ * but refuse to inline (external, recursive).
  */
 function tryInlineCallChain(
   node: ts.CallExpression,
   ctx: ExtractionContext,
 ): Expr | null {
-  // Phase 1/2 cap: only inline at the top level. Nested calls keep today's
-  // fallthrough until Phase 5 lifts the cap and relies on _tracingCallSymbols.
   if (ctx._callDepth >= 1) return null;
 
   const callee = node.expression as ts.Identifier;
@@ -471,14 +456,10 @@ function tryInlineCallChain(
     );
   }
 
-  // Resolve the callee to (params, raw body node). Body-shape analysis lives
-  // downstream in extractCalleeBody so each phase widens one layer.
   const shape = resolveCalleeShape(decl);
   if (!shape) return null;
   const { params, body: calleeBody } = shape;
 
-  // Cycle guard. With depth capped at 1 in Phase 1/2/3 this can't fire yet,
-  // but the scaffolding is in place so Phase 5 needs no further wiring.
   if (ctx._tracingCallSymbols.has(resolvedSymbol)) {
     return makeUnconstrained(
       node,
@@ -487,24 +468,22 @@ function tryInlineCallChain(
     );
   }
 
-  // Arity and param-shape checks.
   if (node.arguments.length !== params.length) return null;
   const paramSymbols: ts.Symbol[] = [];
   for (const p of params) {
-    if (!ts.isIdentifier(p.name)) return null; // no destructured params yet
-    if (p.dotDotDotToken) return null; // no rest params yet
+    if (!ts.isIdentifier(p.name)) return null;
+    if (p.dotDotDotToken) return null;
     const s = ctx.checker.getSymbolAtLocation(p.name);
     if (!s) return null;
     paramSymbols.push(s);
   }
 
-  // Extract each argument in the *caller's* current context. This runs
-  // before we mutate ctx so the args see whatever scope the call site is in.
+  // Arguments are extracted in the caller's scope before we mutate ctx, so
+  // they resolve against the call site's bindings, not the callee's.
   const argExprs: Expr[] = node.arguments.map((a) =>
     extractExpr(a as ts.Expression, ctx),
   );
 
-  // Enter callee scope.
   const priorSubstitution = ctx.paramSubstitution;
   const nextSubstitution = new Map(priorSubstitution);
   for (let i = 0; i < paramSymbols.length; i++) {
@@ -516,13 +495,10 @@ function tryInlineCallChain(
 
   const body = extractCalleeBody(calleeBody, ctx);
 
-  // Restore caller scope.
   ctx.paramSubstitution = priorSubstitution;
   ctx._tracingCallSymbols.delete(resolvedSymbol);
   ctx._callDepth -= 1;
 
-  // If the body shape wasn't one we can inline, fall through to the outer
-  // makeUnconstrained path rather than emitting a partial IR.
   return body;
 }
 
@@ -554,31 +530,21 @@ function resolveCalleeShape(
 
 /**
  * Extract the return-value IR from a callee body, in the caller's current
- * paramSubstitution scope. Supported shapes:
- *   - Arrow expression body (`=> x * 2`)
- *   - Block with `{ return <expr>; }`
- *   - Block shaped like `if (G1) return E1; if (G2) return E2; return Ef;` —
- *     lifted to nested `ite(G1, E1, ite(G2, E2, Ef))` (Phase 3).
- *   - Block with leading `const y = …;` bindings followed by guards and a
- *     final return (Phase 4). The consts resolve implicitly via tryTraceLocal
- *     when the return expression references them — no explicit IR node is
- *     emitted for the binding itself.
- * Returns null for block shapes we don't handle yet (let/var reassignments,
- * throws in non-guard positions, loops) — the caller falls through to the
- * outer unconstrained path.
+ * paramSubstitution scope. Handles arrow expression bodies and block bodies
+ * shaped as `[const …]* [if (G) return E;]* return Ef;`. Const bindings
+ * resolve implicitly via tryTraceLocal when the return expression references
+ * them — no IR node is emitted for the binding itself. Guards lift to
+ * nested `ite`. Returns null for shapes we don't recognize.
  */
 function extractCalleeBody(
   body: ts.ConciseBody,
   ctx: ExtractionContext,
 ): Expr | null {
-  // Arrow expression body: extract directly.
   if (!ts.isBlock(body)) return extractExpr(body, ctx);
 
   const stmts = body.statements;
   if (stmts.length === 0) return null;
 
-  // Leading statements may be either a pure `const` binding (skipped — the
-  // existing symbol tracer handles references to it) or an `if-return` guard.
   const guards: Array<{ cond: BoolExpr; early: Expr }> = [];
   for (let i = 0; i < stmts.length - 1; i++) {
     const stmt = stmts[i];
