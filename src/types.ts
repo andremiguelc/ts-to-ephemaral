@@ -47,3 +47,39 @@ export interface AralFn {
   typedParams?: Array<{ name: string; type: string }>;
   optionalFields?: string[];
 }
+
+/**
+ * Stable identifier for why the parser refused to follow an expression. Tests
+ * assert on this; the human-facing reason string stays free to be reworded.
+ */
+export type DiagnosticLabel =
+  | "return-guard-complex"
+  | "unsupported-expression"
+  | "unsupported-boolean"
+  | "optional-chaining-no-fallback"
+  | "prop-type-unresolvable"
+  | "prop-access-complex"
+  | "non-arith-binary"
+  | "method-call"
+  | "callee-shape-not-inlineable"
+  | "non-identifier-callee"
+  | "call-depth-exceeded"
+  | "call-size-exceeded"
+  | "external-no-source"
+  | "external-ambient"
+  | "recursive-call"
+  | "reduce-non-zero-init"
+  | "reduce-complex-receiver"
+  | "reduce-non-arrow-callback"
+  | "reduce-callback-params"
+  | "reduce-callback-destructure"
+  | "reduce-callback-body"
+  | "reduce-callback-non-sum"
+  | "item-boolean-unsupported"
+  | "item-expression-unsupported"
+  | "null-coalesce-non-field"
+  | "variable-no-init"
+  | "math-abs"
+  | "math-max"
+  | "math-min"
+  | "math-pow";

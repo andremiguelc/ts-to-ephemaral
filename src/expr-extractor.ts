@@ -12,6 +12,7 @@ import type {
   ArithOp,
   CompOp,
   RoundingMode,
+  DiagnosticLabel,
 } from "./types.js";
 import type { AssignmentSite } from "./field-finder.js";
 
@@ -28,8 +29,9 @@ export interface ExtractionContext {
   checker: ts.TypeChecker;
   /** The name of the input parameter (e.g., "payment" in f(payment: Payment)) */
   inputParamName: string | null;
-  /** Accumulated unconstrained parameters */
-  unconstrainedParams: Map<string, { node: ts.Node; reason: string }>;
+  /** Accumulated unconstrained parameters. `label` is the stable test contract;
+   *  `reason` is the human-facing prose (free to be reworded). */
+  unconstrainedParams: Map<string, { node: ts.Node; reason: string; label?: DiagnosticLabel }>;
   /** Counter for generating unique unconstrained param names */
   unkCounter: number;
   /** Accumulated typed parameters (non-input function params with resolvable types) */
@@ -100,7 +102,8 @@ export function extractAssignedExpr(
     return makeUnconstrained(
       site.expressionNode,
       ctx,
-      "return-guard layer bailed (complex guard form)",
+      "return-guard-complex: the top-level guard isn't a bare `if (G) return E;`. Simplify each guard to that shape with no other statements in its then-branch.",
+      "return-guard-complex",
     );
   }
   return applyGuardsToExpr(body, guards);
@@ -170,7 +173,12 @@ export function extractExpr(node: ts.Expression, ctx: ExtractionContext): Expr {
   }
 
   // Fallback: unconstrained parameter
-  return makeUnconstrained(node, ctx, "unsupported expression");
+  return makeUnconstrained(
+    node,
+    ctx,
+    "unsupported-expression: the expression shape isn't recognized by the parser",
+    "unsupported-expression",
+  );
 }
 
 /**
@@ -246,7 +254,12 @@ export function extractBoolExpr(
   }
 
   // Fallback: wrap an unconstrained param in a trivial comparison
-  const param = makeUnconstrained(node, ctx, "unsupported boolean expression");
+  const param = makeUnconstrained(
+    node,
+    ctx,
+    "unsupported-boolean: the boolean expression shape isn't recognized by the parser",
+    "unsupported-boolean",
+  );
   return { cmp: { op: "gt", left: param, right: { lit: 0 } } };
 }
 
@@ -260,8 +273,12 @@ function extractPropertyAccess(
 
   // Reject standalone optional chaining (obj?.field without || 0 or ?? default).
   if (node.questionDotToken) {
-    return makeUnconstrained(node, ctx,
-      "optional chaining (?.) without null fallback — wrap in `expr ?? 0` or `expr || 0`");
+    return makeUnconstrained(
+      node,
+      ctx,
+      "optional-chaining-no-fallback: `obj?.field` has no numeric fallback. Wrap with `?? 0` or `|| 0` so the nullable branch resolves to a number.",
+      "optional-chaining-no-fallback",
+    );
   }
 
   // input.field → { field: { name: fieldName } }
@@ -292,30 +309,40 @@ function extractPropertyAccess(
     }
 
     // Type couldn't be resolved — fall back to __ext_ naming
-    return makeUnconstrained(node, ctx, "property access on variable with unresolvable type");
+    return makeUnconstrained(
+      node,
+      ctx,
+      "prop-type-unresolvable: the object's type couldn't be resolved, so the field access can't be routed to a typed reference. Add an explicit type annotation on the variable.",
+      "prop-type-unresolvable",
+    );
   }
 
-  return makeUnconstrained(node, ctx, "complex property access");
+  return makeUnconstrained(
+    node,
+    ctx,
+    "prop-access-complex: the object isn't a bare identifier, so the field access can't be resolved. Bind the intermediate to a `const` first and access the field off that const.",
+    "prop-access-complex",
+  );
 }
 
 function extractIdentifier(node: ts.Identifier, ctx: ExtractionContext): Expr {
   const name = node.text;
   const symbol = ctx.checker.getSymbolAtLocation(node);
 
-  // Callee-param substitution: during call-chain inlining, a reference to a
-  // callee parameter resolves to the caller's pre-extracted argument IR.
-  // Checked before anything else so a callee param never falls through to
-  // the caller's fieldNames (which would mis-route if the names coincide).
+  // Scope ladder, nearest first. Symbol-keyed resolution (substitution, local
+  // tracing) comes before name-keyed fallback to `fieldNames`, so a local
+  // const or let that happens to share a name with an input-type field
+  // resolves to its local declaration rather than silently mis-routing.
+
+  // 1. Callee-param substitution: during call-chain inlining, a reference to a
+  //    callee parameter resolves to the caller's pre-extracted argument IR.
   if (symbol && ctx.paramSubstitution.has(symbol)) {
     return ctx.paramSubstitution.get(symbol)!;
   }
 
-  // Known field on the type → direct field reference
-  if (ctx.fieldNames.has(name)) {
-    return { field: { name } };
-  }
-
-  // Try to resolve via symbol — trace local variables back to their initializers
+  // 2. Local variable / module const — traced through its declaration's
+  //    initializer. Wins over the name-based fieldNames check below so a
+  //    local declaration with a field-matching name isn't mis-routed.
   if (symbol) {
     const resolved = tryTraceLocal(symbol, node, ctx);
     if (resolved) return resolved;
@@ -336,6 +363,12 @@ function extractIdentifier(node: ts.Identifier, ctx: ExtractionContext): Expr {
         return { field: { name } };
       }
     }
+  }
+
+  // 3. Known field on the input type → direct field reference. Name-based
+  //    fallback for bare identifiers that couldn't be resolved via symbol.
+  if (ctx.fieldNames.has(name)) {
+    return { field: { name } };
   }
 
   // Unresolvable identifier — could be a parameter or item field
@@ -377,7 +410,12 @@ function extractBinaryExpr(
 
   // If it's a comparison, it shouldn't be here (should be in BoolExpr context)
   // but wrap it as an unconstrained parameter
-  return makeUnconstrained(node, ctx, "non-arithmetic binary expression");
+  return makeUnconstrained(
+    node,
+    ctx,
+    "non-arith-binary: the operator isn't one of `+ - * /`. Operators like `%`, `**`, and bitwise ops aren't supported.",
+    "non-arith-binary",
+  );
 }
 
 function extractCallExpr(
@@ -401,6 +439,44 @@ function extractCallExpr(
       }
     }
 
+    // Math.abs / max / min / pow — detected ahead of the generic ambient path
+    // so the diagnostic label names the specific operation, not a generic
+    // "external function". No rewrite hint: rewriting the call site won't help.
+    if (ts.isIdentifier(obj) && obj.text === "Math") {
+      if (method === "abs") {
+        return makeUnconstrained(
+          node,
+          ctx,
+          "math-abs: Math.abs isn't supported.",
+          "math-abs",
+        );
+      }
+      if (method === "max") {
+        return makeUnconstrained(
+          node,
+          ctx,
+          "math-max: Math.max isn't supported.",
+          "math-max",
+        );
+      }
+      if (method === "min") {
+        return makeUnconstrained(
+          node,
+          ctx,
+          "math-min: Math.min isn't supported.",
+          "math-min",
+        );
+      }
+      if (method === "pow") {
+        return makeUnconstrained(
+          node,
+          ctx,
+          "math-pow: Math.pow isn't supported.",
+          "math-pow",
+        );
+      }
+    }
+
     // .reduce((acc, item) => acc + item.field, 0) → sum
     if (method === "reduce" && node.arguments.length === 2) {
       return extractReduceToSum(node, ctx);
@@ -420,7 +496,8 @@ function extractCallExpr(
     return makeUnconstrained(
       node,
       ctx,
-      `method call '.${method}()' — method bodies aren't inlined yet; consider extracting to a free function`,
+      `method-call: '.${method}()' is a method on an instance; method bodies aren't inlined yet. Extract to a free function taking the receiver as a parameter.`,
+      "method-call",
     );
   }
 
@@ -429,11 +506,17 @@ function extractCallExpr(
     return makeUnconstrained(
       node,
       ctx,
-      `callee '${calleeName}' shape not inlineable — a helper of the form \`function ${calleeName}(...) { return <expr>; }\` would inline`,
+      `callee-shape-not-inlineable: '${calleeName}' has a body the parser can't reduce to a single return expression (loops, reassignments, or multiple non-guard returns). Rewrite the helper as \`function ${calleeName}(...) { return <expr>; }\`, optionally with leading \`const\` bindings and \`if (G) return E;\` guards.`,
+      "callee-shape-not-inlineable",
     );
   }
 
-  return makeUnconstrained(node, ctx, "call expression with a non-identifier callee");
+  return makeUnconstrained(
+    node,
+    ctx,
+    "non-identifier-callee: the callee isn't a named function (IIFE, array-indexed call, `.bind()`, etc.). Give the function a name and call it by that name.",
+    "non-identifier-callee",
+  );
 }
 
 const MAX_CALL_DEPTH = readPositiveIntEnv("EPHEMARAL_CALL_DEPTH_MAX", 64);
@@ -465,7 +548,8 @@ function tryInlineCallChain(
     return makeUnconstrained(
       node,
       ctx,
-      `call chain depth exceeded at '${calleeName}' — flatten the helper stack or inline one level by hand`,
+      `call-depth-exceeded: the call chain at '${calleeName}' is more than ${MAX_CALL_DEPTH} levels deep. Flatten the helper stack or inline one level by hand.`,
+      "call-depth-exceeded",
     );
   }
 
@@ -473,7 +557,8 @@ function tryInlineCallChain(
     return makeUnconstrained(
       node,
       ctx,
-      `call chain IR size exceeded at '${calleeName}' — simplify the helper chain or split the site`,
+      `call-size-exceeded: the accumulated IR from inlining into this site has exceeded ${MAX_CALL_SIZE} nodes at '${calleeName}'. Simplify the helper chain or split the site.`,
+      "call-size-exceeded",
     );
   }
 
@@ -491,7 +576,8 @@ function tryInlineCallChain(
     return makeUnconstrained(
       node,
       ctx,
-      `external function '${calleeName}' — no source in project to follow`,
+      `external-no-source: '${calleeName}' has no source declaration visible to the parser.`,
+      "external-no-source",
     );
   }
 
@@ -501,7 +587,8 @@ function tryInlineCallChain(
     return makeUnconstrained(
       node,
       ctx,
-      `external function '${calleeName}' — declared in ambient .d.ts, no body to follow`,
+      `external-ambient: '${calleeName}' is declared in an ambient .d.ts file (standard library or third-party type) with no body to follow.`,
+      "external-ambient",
     );
   }
 
@@ -513,7 +600,8 @@ function tryInlineCallChain(
     return makeUnconstrained(
       node,
       ctx,
-      `recursive call '${calleeName}' — cycles not followed; consider a bounded iteration form`,
+      `recursive-call: '${calleeName}' calls itself (directly or indirectly); cycles aren't followed.`,
+      "recursive-call",
     );
   }
 
@@ -700,7 +788,12 @@ function extractReduceToSum(
 
   // Verify initial value is 0
   if (!ts.isNumericLiteral(initialValue) || Number(initialValue.text) !== 0) {
-    return makeUnconstrained(node, ctx, "reduce with non-zero initial value");
+    return makeUnconstrained(
+      node,
+      ctx,
+      "reduce-non-zero-init: the initial value passed to `.reduce` isn't 0. Start the reduce from 0.",
+      "reduce-non-zero-init",
+    );
   }
 
   // The collection is the object .reduce() is called on
@@ -712,24 +805,44 @@ function extractReduceToSum(
   }
 
   if (!collectionName) {
-    return makeUnconstrained(node, ctx, "reduce on complex expression");
+    return makeUnconstrained(
+      node,
+      ctx,
+      "reduce-complex-receiver: `.reduce` is called on something other than a bare identifier or `obj.field` path. Bind the collection to a `const` first and call `.reduce` on that const.",
+      "reduce-complex-receiver",
+    );
   }
 
   // Parse callback: (acc, item) => acc + item.field
   if (!ts.isArrowFunction(callback) && !ts.isFunctionExpression(callback)) {
-    return makeUnconstrained(node, ctx, "reduce with non-arrow callback");
+    return makeUnconstrained(
+      node,
+      ctx,
+      "reduce-non-arrow-callback: the `.reduce` callback isn't an arrow function or function expression. Inline the callback as `(acc, item) => ...`.",
+      "reduce-non-arrow-callback",
+    );
   }
 
   const params = callback.parameters;
   if (params.length !== 2) {
-    return makeUnconstrained(node, ctx, "reduce callback needs 2 params");
+    return makeUnconstrained(
+      node,
+      ctx,
+      "reduce-callback-params: the `.reduce` callback doesn't take exactly 2 parameters. Use the `(acc, item) => ...` shape.",
+      "reduce-callback-params",
+    );
   }
 
   const accName = ts.isIdentifier(params[0].name) ? params[0].name.text : null;
   const itemName = ts.isIdentifier(params[1].name) ? params[1].name.text : null;
 
   if (!accName || !itemName) {
-    return makeUnconstrained(node, ctx, "reduce callback destructured params");
+    return makeUnconstrained(
+      node,
+      ctx,
+      "reduce-callback-destructure: a `.reduce` callback parameter is destructured. Take `(acc, item)` as plain identifiers and access fields on `item` inside the body.",
+      "reduce-callback-destructure",
+    );
   }
 
   // Get the body expression
@@ -746,7 +859,12 @@ function extractReduceToSum(
   }
 
   if (!bodyExpr) {
-    return makeUnconstrained(node, ctx, "reduce callback complex body");
+    return makeUnconstrained(
+      node,
+      ctx,
+      "reduce-callback-body: the `.reduce` callback body isn't a single return expression. Return `acc + item.field` (or an expression of that shape) directly.",
+      "reduce-callback-body",
+    );
   }
 
   // Expect: acc + <item-expr>
@@ -763,7 +881,12 @@ function extractReduceToSum(
     }
   }
 
-  return makeUnconstrained(node, ctx, "reduce callback non-sum pattern");
+  return makeUnconstrained(
+    node,
+    ctx,
+    "reduce-callback-non-sum: the `.reduce` callback body isn't `acc + <item-expr>`. Only summing folds are supported today; return `acc + <item-expr>` to match the shape.",
+    "reduce-callback-non-sum",
+  );
 }
 
 /**
@@ -882,7 +1005,12 @@ function extractItemBoolExpr(
     }
   }
 
-  const param = makeUnconstrained(node, ctx, "unsupported item boolean");
+  const param = makeUnconstrained(
+    node,
+    ctx,
+    "item-boolean-unsupported: the boolean expression inside the `.every`/collection body isn't recognized by the parser.",
+    "item-boolean-unsupported",
+  );
   return { cmp: { op: "gt", left: param, right: { lit: 0 } } };
 }
 
@@ -929,7 +1057,12 @@ function extractItemExpr(
     }
   }
 
-  return makeUnconstrained(node, ctx, "unsupported item expression");
+  return makeUnconstrained(
+    node,
+    ctx,
+    "item-expression-unsupported: the expression inside the `.reduce`/collection body isn't recognized by the parser.",
+    "item-expression-unsupported",
+  );
 }
 
 /** Returns true when the TS type includes `undefined` or `null`. On such types,
@@ -965,17 +1098,23 @@ function extractNullCoalescing(
   }
 
   // Complex left side — just treat as unconstrained
-  return makeUnconstrained(node, ctx, "null coalescing on non-field");
+  return makeUnconstrained(
+    node,
+    ctx,
+    "null-coalesce-non-field: `??` (or `|| 0`) is applied to something that isn't a field reference. Bind the left side to a `const` first and apply the fallback to that const's field.",
+    "null-coalesce-non-field",
+  );
 }
 
 function makeUnconstrained(
   node: ts.Node,
   ctx: ExtractionContext,
   reason: string,
+  label?: DiagnosticLabel,
 ): Expr {
   const readable = deriveReadableName(node);
   const name = `__ext_${readable}_${ctx.unkCounter++}`;
-  ctx.unconstrainedParams.set(name, { node, reason });
+  ctx.unconstrainedParams.set(name, { node, reason, label });
   return { field: { name } };
 }
 
@@ -1102,7 +1241,12 @@ function traceInitializer(
   ctx: ExtractionContext,
 ): Expr {
   if (!decl.initializer) {
-    return makeUnconstrained(decl, ctx, "variable without initializer");
+    return makeUnconstrained(
+      decl,
+      ctx,
+      "variable-no-init: a variable declaration has no initializer, so there's no expression to extract.",
+      "variable-no-init",
+    );
   }
   // Don't add to _tracingSymbols here — the caller already did that.
   // But save/restore selfRefOverride to avoid interference.

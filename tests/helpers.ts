@@ -23,6 +23,10 @@ export interface ExtractedSite extends AralFn {
   line: number;
   /** Number of unconstrained parameters */
   unconstrainedCount: number;
+  /** Stable diagnostic labels, one per unconstrained parameter, in emission order.
+   *  Entries are undefined for any site that hasn't been migrated to the new
+   *  labeling scheme yet; tests should use this array as the primary contract. */
+  unconstrainedLabels: Array<string | undefined>;
 }
 
 /** Extract all assignment sites for the given .aral file. */
@@ -73,6 +77,7 @@ export function extractAll(aralName: string): ExtractedSite[] {
       filePath: site.filePath,
       line: site.line,
       unconstrainedCount: ctx.unconstrainedParams.size,
+      unconstrainedLabels: Array.from(ctx.unconstrainedParams.values()).map((v) => v.label),
     };
 
     // Add typedParams if any were discovered

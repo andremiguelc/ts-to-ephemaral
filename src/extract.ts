@@ -172,8 +172,11 @@ for (const [fieldName, fieldSites] of sitesByField) {
     const lineRef = `${shortFile}.ts:${site.line}`;
     if (hasGaps) {
       totalWithGaps++;
-      const paramNames = Array.from(ctx.unconstrainedParams.keys());
-      console.log(`      ⚠ ${lineRef} — ${site.containerName}  (${paramNames.join(", ")})`);
+      const entries = Array.from(ctx.unconstrainedParams.entries());
+      const rendered = entries
+        .map(([name, info]) => (info.label ? `${name} [${info.label}]` : name))
+        .join(", ");
+      console.log(`      ⚠ ${lineRef} — ${site.containerName}  (${rendered})`);
     } else {
       totalFull++;
       console.log(`      ✓ ${lineRef} — ${site.containerName}`);
