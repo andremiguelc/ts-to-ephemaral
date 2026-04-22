@@ -662,6 +662,150 @@ describe("call-chain inlining — guard-chain body", () => {
   });
 });
 
+// ─── Call-chain inlining — harder supported paths ───────────────
+
+describe("call-chain inlining — name collision", () => {
+  it("callee param named `subtotal` doesn't conflate with the Order.subtotal field", () => {
+    // scaleBySubtotal(subtotal) returns subtotal * 2. Called with order.subtotal.
+    // If symbol-keyed substitution leaks into fieldNames lookup, we'd see a
+    // bogus conflation; the IR should be arith(mul, field(subtotal), lit(2)).
+    const r = fromOrder("total", "call_name_collision.ts");
+    const v = getAssign(r);
+    assert.equal(v.arith?.op, "mul");
+    assert.deepStrictEqual(v.arith.left, { field: { name: "subtotal" } });
+    assert.deepStrictEqual(v.arith.right, { lit: 2 });
+    assert.equal(r.unconstrainedCount, 0);
+  });
+});
+
+describe("call-chain inlining — substitution reaches all positions", () => {
+  it("substitutes into both branches and the condition of a ternary body", () => {
+    // positivelyDouble(x) = x > 0 ? x * 2 : 0; called with order.subtotal.
+    // Every occurrence of x inside the body should resolve to field(subtotal).
+    const r = fromOrder("total", "call_substitution_in_branches.ts");
+    const v = getAssign(r);
+    assert.ok("ite" in v);
+    // Condition: subtotal > 0
+    assert.equal(v.ite.cond.cmp?.op, "gt");
+    assert.deepStrictEqual(v.ite.cond.cmp.left, { field: { name: "subtotal" } });
+    assert.deepStrictEqual(v.ite.cond.cmp.right, { lit: 0 });
+    // Then: subtotal * 2
+    assert.equal(v.ite.then.arith?.op, "mul");
+    assert.deepStrictEqual(v.ite.then.arith.left, { field: { name: "subtotal" } });
+    assert.deepStrictEqual(v.ite.then.arith.right, { lit: 2 });
+    // Else: 0
+    assert.deepStrictEqual(v.ite.else, { lit: 0 });
+    assert.equal(r.unconstrainedCount, 0);
+  });
+
+  it("substitutes into every leaf of a four-param arithmetic body", () => {
+    // combine(x, y, z, w) = x * y + z - w; called with (order.subtotal, a, b, c).
+    // All four leaves should carry their substituted caller expressions.
+    const r = fromOrder("total", "call_all_leaves.ts");
+    const v = getAssign(r);
+    // Top: (x * y + z) - w
+    assert.equal(v.arith?.op, "sub");
+    const left = v.arith.left;
+    const w = v.arith.right;
+    // w substitutes to caller's `c`
+    assert.deepStrictEqual(w, { field: { name: "c" } });
+    // Left: x * y + z
+    assert.equal(left.arith?.op, "add");
+    assert.deepStrictEqual(left.arith.right, { field: { name: "b" } });
+    // x * y
+    assert.equal(left.arith.left.arith?.op, "mul");
+    assert.deepStrictEqual(left.arith.left.arith.left, { field: { name: "subtotal" } });
+    assert.deepStrictEqual(left.arith.left.arith.right, { field: { name: "a" } });
+    assert.equal(r.unconstrainedCount, 0);
+  });
+});
+
+describe("call-chain inlining — local const tracing inside callee", () => {
+  it("traces a two-hop const chain back to the caller's argument", () => {
+    // twoHop(x, y): const a = x; const b = a * 2; return b + y;
+    // Called with (order.subtotal, y). Expected: arith(add, arith(mul, subtotal, 2), y).
+    const r = fromOrder("total", "call_two_hop_const.ts");
+    const v = getAssign(r);
+    assert.equal(v.arith?.op, "add");
+    assert.deepStrictEqual(v.arith.right, { field: { name: "y" } });
+    assert.equal(v.arith.left.arith?.op, "mul");
+    assert.deepStrictEqual(v.arith.left.arith.left, { field: { name: "subtotal" } });
+    assert.deepStrictEqual(v.arith.left.arith.right, { lit: 2 });
+    assert.equal(r.unconstrainedCount, 0);
+  });
+});
+
+describe("call-chain inlining — depth", () => {
+  it("composes an eight-level helper chain without tripping the depth cap", () => {
+    // f1 → f2 → … → f8, each adding a constant; called with order.subtotal.
+    // The default MAX_CALL_DEPTH is 64, so an 8-deep chain composes cleanly.
+    const r = fromOrder("total", "call_deep_chain.ts");
+    assert.equal(r.unconstrainedCount, 0);
+    // Sanity: the outer op is `add` (f1 returns f2(x) + 1).
+    const v = getAssign(r);
+    assert.equal(v.arith?.op, "add");
+  });
+});
+
+describe("call-chain inlining — arguments that are themselves calls", () => {
+  it("composes caller-side argument calls before substitution", () => {
+    // f(g(h(order.subtotal)) + 1) where h(x)=x+1, g(x)=x*2, f(x)=x-3.
+    // The caller-side `+ 1` sits around the inner g(h(x)) expression.
+    const r = fromOrder("total", "call_arg_is_call.ts");
+    assert.equal(r.unconstrainedCount, 0);
+    const v = getAssign(r);
+    // Outer is f's body: (arg) - 3 where arg = g(h(subtotal)) + 1.
+    assert.equal(v.arith?.op, "sub");
+    assert.deepStrictEqual(v.arith.right, { lit: 3 });
+    // arg = (g(h(subtotal))) + 1 = (mul(add(subtotal, 1), 2)) + 1
+    assert.equal(v.arith.left.arith?.op, "add");
+    assert.deepStrictEqual(v.arith.left.arith.right, { lit: 1 });
+    // Inside: mul(add(subtotal, 1), 2)
+    const inner = v.arith.left.arith.left;
+    assert.equal(inner.arith?.op, "mul");
+    assert.deepStrictEqual(inner.arith.right, { lit: 2 });
+    assert.equal(inner.arith.left.arith?.op, "add");
+    assert.deepStrictEqual(inner.arith.left.arith.left, { field: { name: "subtotal" } });
+    assert.deepStrictEqual(inner.arith.left.arith.right, { lit: 1 });
+  });
+});
+
+describe("call-chain inlining — wide-arity callee", () => {
+  it("substitutes every parameter of an eight-param callee", () => {
+    // eightly(a,b,c,d,e,f,g,h) = a*b + c*d - e*f + g*h
+    // called with (order.subtotal, a, b, c, d, e, f, g).
+    const r = fromOrder("total", "call_wide_callee.ts");
+    assert.equal(r.unconstrainedCount, 0);
+    // All eight caller-side names should appear once as field refs. Check
+    // the set rather than the exact structural position, to keep the test
+    // resilient to minor tree-shape differences.
+    const seen = new Set<string>();
+    (function walk(e: any) {
+      if (!e || typeof e !== "object") return;
+      if ("field" in e && typeof e.field?.name === "string") seen.add(e.field.name);
+      for (const v of Object.values(e)) walk(v);
+    })(getAssign(r));
+    assert.deepStrictEqual(
+      new Set([...seen].filter((n) => ["subtotal","a","b","c","d","e","f","g"].includes(n))),
+      new Set(["subtotal","a","b","c","d","e","f","g"]),
+    );
+  });
+});
+
+describe("call-chain inlining — local const shadows input-field name", () => {
+  it("local const `subtotal` resolves to its initializer, not the Order.subtotal field", () => {
+    // shadowed(y): const subtotal = 42; return subtotal + y;
+    // Called with y. `subtotal` inside the callee must trace to lit(42),
+    // NOT route to the Order's subtotal field.
+    const r = fromOrder("total", "call_shadowing.ts");
+    const v = getAssign(r);
+    assert.equal(v.arith?.op, "add");
+    assert.deepStrictEqual(v.arith.left, { lit: 42 });
+    assert.deepStrictEqual(v.arith.right, { field: { name: "y" } });
+    assert.equal(r.unconstrainedCount, 0);
+  });
+});
+
 // ─── Multi-site extraction ──────────────────────────────────────
 
 describe("multi-site extraction", () => {
