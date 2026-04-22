@@ -82,4 +82,13 @@ export type DiagnosticLabel =
   | "math-abs"
   | "math-max"
   | "math-min"
-  | "math-pow";
+  | "math-pow"
+  | "global-ambient-identifier"
+  | "async-callee"
+  | "generator-callee"
+  | "element-access"
+  | "typeof-operator"
+  | "instanceof-operator"
+  | "in-operator"
+  | "comma-operator"
+  | "logical-as-value";

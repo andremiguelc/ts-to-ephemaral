@@ -110,12 +110,41 @@ export function extractAssignedExpr(
 }
 
 /**
+ * Strip transparent wrapping nodes — parens and type annotations. Used
+ * wherever we need the underlying expression kind (e.g., detecting an
+ * arrow function passed as a `.reduce` callback that's been cast to `any`).
+ */
+function unwrapTransparent(node: ts.Expression): ts.Expression {
+  let n: ts.Expression = node;
+  while (
+    ts.isParenthesizedExpression(n) ||
+    ts.isAsExpression(n) ||
+    ts.isTypeAssertionExpression(n) ||
+    ts.isSatisfiesExpression(n) ||
+    ts.isNonNullExpression(n)
+  ) {
+    n = n.expression;
+  }
+  return n;
+}
+
+/**
  * Extract an Aral-fn Expr from a TS expression node.
  * Always succeeds — unknown patterns become unconstrained parameters.
  */
 export function extractExpr(node: ts.Expression, ctx: ExtractionContext): Expr {
-  // Unwrap parenthesized expressions
+  // Unwrap parenthesized expressions and transparent type annotations.
+  // `as T`, `<T>x`, `satisfies T`, and `x!` are runtime no-ops — they carry
+  // type information only. Recurse into the inner expression.
   if (ts.isParenthesizedExpression(node)) {
+    return extractExpr(node.expression, ctx);
+  }
+  if (
+    ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) ||
+    ts.isSatisfiesExpression(node) ||
+    ts.isNonNullExpression(node)
+  ) {
     return extractExpr(node.expression, ctx);
   }
 
@@ -124,18 +153,46 @@ export function extractExpr(node: ts.Expression, ctx: ExtractionContext): Expr {
     return { lit: Number(node.text) };
   }
 
-  // Prefix unary: -expr (negative numbers not caught by NumericLiteral)
-  if (
-    ts.isPrefixUnaryExpression(node) &&
-    node.operator === ts.SyntaxKind.MinusToken &&
-    ts.isNumericLiteral(node.operand)
-  ) {
-    return { lit: -Number(node.operand.text) };
+  // Prefix unary: `-expr` negates a literal; `+expr` is the identity.
+  if (ts.isPrefixUnaryExpression(node)) {
+    if (
+      node.operator === ts.SyntaxKind.MinusToken &&
+      ts.isNumericLiteral(node.operand)
+    ) {
+      return { lit: -Number(node.operand.text) };
+    }
+    if (node.operator === ts.SyntaxKind.PlusToken) {
+      return extractExpr(node.operand, ctx);
+    }
   }
 
   // Property access: input.field
   if (ts.isPropertyAccessExpression(node)) {
     return extractPropertyAccess(node, ctx);
+  }
+
+  // Element access: arr[0], obj["key"], rows[0][1]. Not modeled in the IR —
+  // flag with a specific label so the diagnostic names the pattern instead
+  // of dropping into the generic fallback.
+  if (ts.isElementAccessExpression(node)) {
+    return makeUnconstrained(
+      node,
+      ctx,
+      "element-access: array or computed property access (`arr[i]`, `obj[\"key\"]`) isn't modeled. Destructure to a named `const` or expose the value as a typed field.",
+      "element-access",
+    );
+  }
+
+  // typeof in an Expr context (e.g., `typeof x` inside a comparison: it lands
+  // here when extractBoolExpr descends into `typeof x === "number"` and calls
+  // extractExpr on each side). Route to the same label as the BoolExpr path.
+  if (ts.isTypeOfExpression(node)) {
+    return makeUnconstrained(
+      node,
+      ctx,
+      "typeof-operator: runtime type checks aren't modeled. Narrow via an explicit discriminator field.",
+      "typeof-operator",
+    );
   }
 
   // Identifier: bare field name (e.g., in collection body context) or param
@@ -188,8 +245,16 @@ export function extractBoolExpr(
   node: ts.Expression,
   ctx: ExtractionContext,
 ): BoolExpr {
-  // Unwrap parens
+  // Unwrap parens and transparent type annotations (see extractExpr).
   if (ts.isParenthesizedExpression(node)) {
+    return extractBoolExpr(node.expression, ctx);
+  }
+  if (
+    ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) ||
+    ts.isSatisfiesExpression(node) ||
+    ts.isNonNullExpression(node)
+  ) {
     return extractBoolExpr(node.expression, ctx);
   }
 
@@ -201,8 +266,52 @@ export function extractBoolExpr(
     return { not: extractBoolExpr(node.operand, ctx) };
   }
 
+  // Boolean literals encode as trivially-true / trivially-false comparisons.
+  // No IR literal-boolean variant today; a tautological cmp is simpler than
+  // teaching the IR a new case.
+  if (node.kind === ts.SyntaxKind.TrueKeyword) {
+    return { cmp: { op: "eq", left: { lit: 1 }, right: { lit: 1 } } };
+  }
+  if (node.kind === ts.SyntaxKind.FalseKeyword) {
+    return { cmp: { op: "eq", left: { lit: 0 }, right: { lit: 1 } } };
+  }
+
+  // typeof x === "number" — runtime type checks aren't modeled. Explicit
+  // label instead of dropping into the generic unsupported-boolean fallback.
+  if (ts.isTypeOfExpression(node)) {
+    const param = makeUnconstrained(
+      node,
+      ctx,
+      "typeof-operator: runtime type checks (`typeof x === 'number'`) aren't modeled. Narrow via an explicit discriminator field (e.g., a `kind` string on the object).",
+      "typeof-operator",
+    );
+    return { cmp: { op: "gt", left: param, right: { lit: 0 } } };
+  }
+
   if (ts.isBinaryExpression(node)) {
     const op = node.operatorToken.kind;
+
+    // `x instanceof Y` — class identity checks aren't modeled.
+    if (op === ts.SyntaxKind.InstanceOfKeyword) {
+      const param = makeUnconstrained(
+        node,
+        ctx,
+        "instanceof-operator: class-identity checks (`x instanceof Y`) aren't modeled by the parser.",
+        "instanceof-operator",
+      );
+      return { cmp: { op: "gt", left: param, right: { lit: 0 } } };
+    }
+
+    // `'key' in obj` — property-presence checks aren't modeled.
+    if (op === ts.SyntaxKind.InKeyword) {
+      const param = makeUnconstrained(
+        node,
+        ctx,
+        "in-operator: property-presence checks (`'key' in obj`) aren't modeled. Use an explicit optional field and `isPresent`.",
+        "in-operator",
+      );
+      return { cmp: { op: "gt", left: param, right: { lit: 0 } } };
+    }
 
     // Logical: && ||
     if (op === ts.SyntaxKind.AmpersandAmpersandToken) {
@@ -299,6 +408,18 @@ function extractPropertyAccess(
       ts.isParameter(symbol.valueDeclaration) ||
       ts.isVariableDeclaration(symbol.valueDeclaration)
     )) {
+      // Reject ambient-global typed params (Math, Number, JSON, etc.) — they
+      // resolve through lib.*.d.ts but aren't user-owned types. Treating them
+      // as typed params produces silent-wrong qualified field refs. Route to
+      // external-ambient instead.
+      if (symbol.valueDeclaration.getSourceFile().isDeclarationFile) {
+        return makeUnconstrained(
+          node,
+          ctx,
+          `external-ambient: '${objName}' is declared in an ambient .d.ts file; its fields aren't user-owned typed data.`,
+          "external-ambient",
+        );
+      }
       const paramType = ctx.checker.getTypeAtLocation(symbol.valueDeclaration);
       const typeSymbol = paramType.getSymbol() ?? paramType.aliasSymbol;
       if (typeSymbol) {
@@ -371,6 +492,25 @@ function extractIdentifier(node: ts.Identifier, ctx: ExtractionContext): Expr {
     return { field: { name } };
   }
 
+  // 4. Ambient global identifier (NaN, Infinity, undefined, globalThis, …) —
+  //    flag explicitly rather than letting the bare-field fallback silently
+  //    emit `{ name }`. Two detection paths: (a) the symbol's declaration
+  //    lives in an ambient .d.ts; (b) the name is one of the well-known
+  //    global-value keywords that TypeScript resolves without a concrete
+  //    valueDeclaration (notably `undefined`).
+  const isAmbientDecl =
+    symbol?.valueDeclaration?.getSourceFile().isDeclarationFile === true;
+  const isAmbientByName =
+    name === "NaN" || name === "Infinity" || name === "undefined" || name === "globalThis";
+  if (isAmbientDecl || isAmbientByName) {
+    return makeUnconstrained(
+      node,
+      ctx,
+      `global-ambient-identifier: '${name}' is an ambient global (NaN, Infinity, undefined, etc.); not a user-domain value.`,
+      "global-ambient-identifier",
+    );
+  }
+
   // Unresolvable identifier — could be a parameter or item field
   return { field: { name } };
 }
@@ -408,8 +548,34 @@ function extractBinaryExpr(
     };
   }
 
-  // If it's a comparison, it shouldn't be here (should be in BoolExpr context)
-  // but wrap it as an unconstrained parameter
+  // Comma operator — returns the right operand. Emit a specific label
+  // instead of the misleading "use + - * /" advice the non-arith-binary
+  // hint would give.
+  if (op === ts.SyntaxKind.CommaToken) {
+    return makeUnconstrained(
+      node,
+      ctx,
+      "comma-operator: `(a, b)` evaluates `a` for its side effect and returns `b`. Split into separate statements.",
+      "comma-operator",
+    );
+  }
+
+  // `a && b` or `a || b` used where a numeric value is expected (not caught
+  // by the `|| 0` shortcut above). JavaScript returns `a` or `b` here, not a
+  // boolean — a dedicated label lets the LLM see the semantic mismatch.
+  if (
+    op === ts.SyntaxKind.AmpersandAmpersandToken ||
+    op === ts.SyntaxKind.BarBarToken
+  ) {
+    return makeUnconstrained(
+      node,
+      ctx,
+      "logical-as-value: `&&` / `||` in a numeric position returns one of its operands, not a boolean. Rewrite as a ternary (`cond ? a : b`).",
+      "logical-as-value",
+    );
+  }
+
+  // Any other operator (`%`, `**`, bitwise, comparison-misplaced-in-Expr).
   return makeUnconstrained(
     node,
     ctx,
@@ -592,6 +758,28 @@ function tryInlineCallChain(
     );
   }
 
+  // Async / generator callees can't be safely inlined: the call's return
+  // value is a Promise or Iterator, not the body's return expression. Flag
+  // explicitly so the diagnostic names the modifier, not a generic shape
+  // refusal.
+  const asyncGen = classifyAsyncGenerator(decl);
+  if (asyncGen === "async") {
+    return makeUnconstrained(
+      node,
+      ctx,
+      `async-callee: '${calleeName}' is declared \`async\` and returns a Promise; the parser can't inline it as a value.`,
+      "async-callee",
+    );
+  }
+  if (asyncGen === "generator") {
+    return makeUnconstrained(
+      node,
+      ctx,
+      `generator-callee: '${calleeName}' is declared as a generator and returns an Iterator; the parser can't inline it as a value.`,
+      "generator-callee",
+    );
+  }
+
   const shape = resolveCalleeShape(decl);
   if (!shape) return null;
   const { params, body: calleeBody } = shape;
@@ -666,6 +854,32 @@ function countBoolExprNodes(b: BoolExpr): number {
     n += countBoolExprNodes(b.each.body);
   }
   return n;
+}
+
+/**
+ * Detect `async` and generator modifiers on a callee's declaration.
+ * Returns the modifier kind if present, or null if the callee is sync-
+ * and-non-generator. Looks at the declaration directly for function
+ * declarations; for variable declarations, looks at the initializer's
+ * modifiers (arrow / function-expression).
+ */
+function classifyAsyncGenerator(decl: ts.Declaration): "async" | "generator" | null {
+  let fn: ts.FunctionLikeDeclaration | null = null;
+  if (ts.isFunctionDeclaration(decl)) {
+    fn = decl;
+  } else if (ts.isVariableDeclaration(decl) && decl.initializer) {
+    const init = decl.initializer;
+    if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
+      fn = init;
+    }
+  }
+  if (!fn) return null;
+  // Generators: function*() { ... } — the asteriskToken flags it.
+  if ("asteriskToken" in fn && fn.asteriskToken) return "generator";
+  // Async: `async` modifier on the function/arrow.
+  const flags = ts.getCombinedModifierFlags(fn as ts.Declaration);
+  if ((flags & ts.ModifierFlags.Async) !== 0) return "async";
+  return null;
 }
 
 /**
@@ -783,7 +997,9 @@ function extractReduceToSum(
   ctx: ExtractionContext,
 ): Expr {
   const callee = node.expression as ts.PropertyAccessExpression;
-  const callback = node.arguments[0];
+  // Unwrap type annotations on the callback so `(((a,b) => a+b) as any)` is
+  // still recognized as an arrow below.
+  const callback = unwrapTransparent(node.arguments[0]);
   const initialValue = node.arguments[1];
 
   // Verify initial value is 0
@@ -911,7 +1127,7 @@ function tryExtractEvery(
   if (typeName !== "Array" && typeName !== "ReadonlyArray") return null;
 
   if (node.arguments.length !== 1) return null;
-  const callback = node.arguments[0];
+  const callback = unwrapTransparent(node.arguments[0]);
   if (!ts.isArrowFunction(callback) && !ts.isFunctionExpression(callback)) {
     return null;
   }
