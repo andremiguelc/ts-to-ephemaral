@@ -627,6 +627,7 @@ describe("call-chain inlining — direct recursion bails via cycle guard", () =>
     const paramName = r.params.find((p) => p.startsWith("__ext_"));
     assert.ok(paramName?.includes("countdown"),
       `expected __ext_ param to mention 'countdown', got '${paramName}'`);
+    assert.deepStrictEqual(r.unconstrainedLabels, ["recursive-call"]);
   });
 });
 
@@ -803,6 +804,99 @@ describe("call-chain inlining — local const shadows input-field name", () => {
     assert.deepStrictEqual(v.arith.left, { lit: 42 });
     assert.deepStrictEqual(v.arith.right, { field: { name: "y" } });
     assert.equal(r.unconstrainedCount, 0);
+  });
+});
+
+// ─── Call-chain inlining — refusal-path coverage ────────────────
+
+describe("refusal paths — method call", () => {
+  it("calling a method on an instance emits `method-call`", () => {
+    const r = fromOrder("total", "refuse_method_call.ts");
+    assert.deepStrictEqual(r.unconstrainedLabels, ["method-call"]);
+  });
+});
+
+describe("refusal paths — callee shape not inlineable", () => {
+  const cases: Array<[string, string]> = [
+    ["refuse_callee_for_loop.ts", "for-loop in the callee body"],
+    ["refuse_callee_while_loop.ts", "while-loop in the callee body"],
+    ["refuse_callee_forEach.ts", "forEach in the callee body"],
+    ["refuse_callee_let_reassign.ts", "let reassignment in the callee body"],
+    ["refuse_callee_compound_assign.ts", "compound assignment in the callee body"],
+    ["refuse_callee_multi_return.ts", "if-then with a multi-statement block"],
+  ];
+  for (const [file, hypothesis] of cases) {
+    it(`${hypothesis} emits \`callee-shape-not-inlineable\``, () => {
+      const r = fromOrder("total", file);
+      assert.deepStrictEqual(r.unconstrainedLabels, ["callee-shape-not-inlineable"]);
+    });
+  }
+});
+
+describe("refusal paths — Math operations (IR-level gaps)", () => {
+  const cases: Array<[string, string]> = [
+    ["refuse_math_abs.ts", "math-abs"],
+    ["refuse_math_max.ts", "math-max"],
+    ["refuse_math_min.ts", "math-min"],
+    ["refuse_math_pow.ts", "math-pow"],
+  ];
+  for (const [file, label] of cases) {
+    it(`\`${label}\` fires for the matching Math.* call`, () => {
+      const r = fromOrder("total", file);
+      assert.deepStrictEqual(r.unconstrainedLabels, [label]);
+    });
+  }
+
+  it("nested Math.abs(Math.max(...)) fires the outer label", () => {
+    // The outer call IS the site's value; the inner Math.max is never
+    // reached because the outer refusal returns unconstrained for the
+    // whole expression.
+    const r = fromOrder("total", "refuse_math_nested.ts");
+    assert.deepStrictEqual(r.unconstrainedLabels, ["math-abs"]);
+  });
+});
+
+describe("refusal paths — non-identifier callee", () => {
+  it("calling `fns[0](x)` emits `non-identifier-callee`", () => {
+    const r = fromOrder("total", "refuse_non_identifier_callee.ts");
+    assert.deepStrictEqual(r.unconstrainedLabels, ["non-identifier-callee"]);
+  });
+});
+
+describe("refusal paths — external (ambient)", () => {
+  it("calling `parseFloat` (standard-lib ambient) emits `external-ambient`", () => {
+    const r = fromOrder("total", "refuse_external_ambient.ts");
+    assert.deepStrictEqual(r.unconstrainedLabels, ["external-ambient"]);
+  });
+});
+
+describe("refusal paths — partial site (one half composes, the other refuses)", () => {
+  it("round3(subtotal) composes while parseFloat(raw) refuses once", () => {
+    const r = fromOrder("total", "refuse_partial_site.ts");
+    // Exactly one unconstrained — from parseFloat.
+    assert.equal(r.unconstrainedCount, 1);
+    assert.deepStrictEqual(r.unconstrainedLabels, ["external-ambient"]);
+    // The composed half should be visible: outer op is add, left half has a
+    // `round` node (from round3's Math.round wrapping).
+    const v = getAssign(r);
+    assert.equal(v.arith?.op, "add");
+    // The left side of the top-level add is round3's body: round(mul(subtotal, 1000)) / 1000
+    const left = v.arith.left;
+    assert.equal(left.arith?.op, "div");
+    assert.ok("round" in left.arith.left, "left half should contain a `round` node");
+  });
+});
+
+describe("refusal paths — refusal deeper in the call chain", () => {
+  it("f(g(x)) where g has a loop: f inlines and g's body refuses", () => {
+    // f is inlineable; g contains a for-loop. The refusal surfaces as one
+    // unconstrained with the callee-shape label.
+    const r = fromOrder("total", "refuse_at_depth.ts");
+    assert.deepStrictEqual(r.unconstrainedLabels, ["callee-shape-not-inlineable"]);
+    // f's body `g(x) * 2` composed around the refusal: outer op is mul.
+    const v = getAssign(r);
+    assert.equal(v.arith?.op, "mul");
+    assert.deepStrictEqual(v.arith.right, { lit: 2 });
   });
 });
 
