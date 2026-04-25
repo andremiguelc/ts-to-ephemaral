@@ -11,12 +11,14 @@
   "aralFnVersion": "0.1.2",
   "scripts": {
     "extract": "npx tsx src/extract.ts",
-    "test": "npx tsx --test tests/extract.test.ts",
     "test:unit": "npx tsx --test 'tests/unit/**/*.test.ts'",
-    "test:all": "npx tsx --test tests/extract.test.ts 'tests/unit/**/*.test.ts'",
-    "coverage": "node --experimental-test-coverage --import tsx/esm --test tests/extract.test.ts tests/unit/aral-reader.test.ts tests/unit/field-finder.test.ts tests/unit/expr-extractor/*.test.ts"
+    "test:scaffolding": "npx tsx --test 'tests/scaffolding/**/*.test.ts'",
+    "test:all": "npx tsx --test 'tests/unit/**/*.test.ts' 'tests/scaffolding/**/*.test.ts'",
+    "test": "npm run test:all",
+    "typecheck": "npx tsc --noEmit"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "tsx": "^4.0.0"
   },
   "dependencies": {
