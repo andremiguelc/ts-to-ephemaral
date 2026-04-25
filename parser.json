@@ -1,6 +1,0 @@
-{
-  "language": "typescript",
-  "extensions": [".ts"],
-  "invoke": "npx tsx src/index.ts {file}",
-  "schemaVersion": "0.1.0"
-}
