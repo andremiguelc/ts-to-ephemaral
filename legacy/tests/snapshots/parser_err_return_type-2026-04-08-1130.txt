@@ -1,0 +1,3 @@
+INPUT: err_return_type.ts (returns boolean)
+
+Error: NOT VERIFIABLE: Function returns 'boolean' but no parameter has that type. The verifier checks functions that transform a type (e.g., Order → Order). Validation functions (→ boolean) are not yet supported.

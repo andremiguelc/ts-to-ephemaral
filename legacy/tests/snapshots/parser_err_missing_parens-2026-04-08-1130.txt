@@ -1,0 +1,3 @@
+INPUT: err_missing_parens.ts (no parens)
+
+Error: REWRITE: No parentheses found in function signature. Expected: function name(param: Type): Type

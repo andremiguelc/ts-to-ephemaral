@@ -1,0 +1,5 @@
+INPUT: err_nested_field.ts (order.discount.percent)
+
+Error: REWRITE: Nested field access 'order.discount.percent' is not supported. Pass it as a separate parameter instead.
+  Before: function f(order: Type, ...): Type { ... order.discount.percent ... }
+  After:  function f(order: Type, discount_percent: number, ...): Type

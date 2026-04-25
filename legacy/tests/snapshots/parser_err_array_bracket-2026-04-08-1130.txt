@@ -1,0 +1,3 @@
+INPUT: err_array_bracket.ts ([...] syntax)
+
+Error: NOT VERIFIABLE: Array operations ([...]) cannot be formally verified yet. Array field modifications require collection support (planned).

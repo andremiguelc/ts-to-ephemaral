@@ -1,0 +1,3 @@
+INPUT: err_unmatched_ternary.ts (? without :)
+
+Error: REWRITE: Ternary '?' without matching ':'. Check that every 'cond ? a : b' has both branches.

@@ -1,0 +1,6 @@
+INPUT: err_if_no_return.ts (if body mutates)
+
+Error: REWRITE: if-body must return a value — mutation is not supported. Rewrite as:
+  if (cond) return order;  // guard: return unchanged
+  — or —
+  if (cond) return { ...order, field: expr };  // conditional modification

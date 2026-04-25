@@ -1,0 +1,5 @@
+INPUT: err_throw.ts (throw statement)
+
+Error: REWRITE: 'throw' detected. Replace with a guard clause that returns the input unchanged.
+  Before: if (invalid) throw new Error(...);
+  After:  if (invalid) return input;

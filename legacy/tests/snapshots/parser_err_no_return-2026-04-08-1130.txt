@@ -1,0 +1,4 @@
+INPUT: err_no_return.ts (no return)
+
+Error: REWRITE: No return statement found. The function must return an object with spread:
+  return { ...input, field: expr };

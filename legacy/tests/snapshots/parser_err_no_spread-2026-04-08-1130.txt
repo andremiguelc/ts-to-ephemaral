@@ -1,0 +1,4 @@
+INPUT: err_no_spread.ts (no spread)
+
+Error: REWRITE: Return must spread the input to preserve unchanged fields. Change to:
+  return { ...order, field: expr };

@@ -1,0 +1,6 @@
+INPUT: err_arrow.ts (arrow function)
+
+Error: REWRITE: Arrow functions and other forms are not supported. Use a function declaration:
+  function name(input: Type, ...params): Type {
+    return { ...input, field: expr };
+  }

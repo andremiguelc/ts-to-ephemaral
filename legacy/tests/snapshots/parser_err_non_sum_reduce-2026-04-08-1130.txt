@@ -1,0 +1,5 @@
+INPUT: err_reduce_non_sum.ts (non-sum .reduce)
+
+Error: NOT VERIFIABLE: Only sum-pattern .reduce() with initial value 0 is supported:
+  items.reduce((acc, item) => acc + item.field, 0)
+Found initial value: '1'. Other reduce patterns cannot be formally verified.

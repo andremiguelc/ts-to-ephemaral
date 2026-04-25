@@ -1,0 +1,3 @@
+INPUT: err_let.ts (let/var)
+
+Error: REWRITE: 'let'/'var' detected. Use 'const' instead — const declarations are automatically inlined into the return expression.
