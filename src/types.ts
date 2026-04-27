@@ -1,3 +1,6 @@
+import type ts from "typescript";
+import type { DiagnosticLabel } from "./diagnostics/labels.js";
+
 export const ARAL_FN_VERSION = "0.1.2";
 
 export type ArithOp = "add" | "sub" | "mul" | "div";
@@ -38,4 +41,35 @@ export interface AralFn {
   assigns: FieldAssign[];
   typedParams?: Array<{ name: string; type: string }>;
   optionalFields?: string[];
+}
+
+export interface ResolvedTargetType {
+  name: string;
+  fields: Record<string, string>;
+}
+
+export interface ResolvedSignature {
+  parameters: Array<{ name: string; type: string }>;
+  returnType: string;
+}
+
+export interface SiteTarget {
+  fieldName: string;
+  expression: ts.Expression;
+}
+
+export interface DiscoveredSite {
+  filePath: string;
+  line: number;
+  sourceFile: ts.SourceFile;
+  targetType: ResolvedTargetType;
+  signature: ResolvedSignature;
+  targets: SiteTarget[];
+}
+
+export interface Diagnostic {
+  label: DiagnosticLabel;
+  reason: string;
+  filePath: string;
+  line: number;
 }
