@@ -1,7 +1,10 @@
-import type { DiagnosticLabel } from "./labels.js";
 import { CATALOG, type CatalogEntry } from "./catalog.js";
+import type { Diagnostic } from "../types.js";
 
-export function emit(label: DiagnosticLabel, reason: string): string {
-  const entry: CatalogEntry = CATALOG[label];
-  return `[${label}] ${entry}\n  ${reason}`;
+export function emit(diagnostic: Diagnostic): string {
+  const entry: CatalogEntry = CATALOG[diagnostic.label];
+  return (
+    `${diagnostic.filePath}:${diagnostic.line} [${diagnostic.label}] ${entry}\n` +
+    `  ${diagnostic.reason}`
+  );
 }

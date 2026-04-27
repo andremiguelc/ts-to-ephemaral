@@ -1,11 +1,9 @@
 /**
- * Scaffolding invariants — segment 1 (cliff-edge).
- *
- * Four small checks that prove the refactor's setup state holds:
- *   1. legacy parser is at legacy/, not src/
- *   2. CLI errors with the scaffolding message
- *   3. tsc --noEmit passes (no dangling imports in src/)
- *   4. legacy/ is invisible to the test runner and tsc
+ * Durable invariants from the refactor's setup phase:
+ *   1. legacy parser is archived under legacy/, not src/
+ *   2. tsc --noEmit passes
+ *   3. legacy/ is invisible to the test runner and tsc
+ *   4. CLI prints a usage line and exits non-zero when called without args
  */
 
 import { describe, it } from "node:test";
@@ -15,9 +13,8 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 const ROOT = new URL("../..", import.meta.url).pathname;
-const PHRASE = "parser: not implemented (stage: scaffolding)";
 
-describe("scaffolding — segment 1 invariants", () => {
+describe("refactor invariants", () => {
   it("legacy parser is archived under legacy/src/", () => {
     assert.ok(existsSync(join(ROOT, "legacy/src/expr-extractor.ts")));
     assert.ok(existsSync(join(ROOT, "legacy/src/field-finder.ts")));
@@ -25,17 +22,7 @@ describe("scaffolding — segment 1 invariants", () => {
     assert.ok(!existsSync(join(ROOT, "src/field-finder.ts")));
   });
 
-  it("CLI errors with the scaffolding message and points at the roadmap", () => {
-    const r = spawnSync("npx", ["tsx", join(ROOT, "src/extract.ts")], {
-      cwd: ROOT,
-      encoding: "utf-8",
-    });
-    assert.notEqual(r.status, 0);
-    assert.ok(r.stderr.includes(PHRASE), `stderr was: ${r.stderr}`);
-    assert.match(r.stderr, /roadmap\/parser-refactor\/INDEX\.md/);
-  });
-
-  it("tsc --noEmit passes (no dangling imports left by the move)", () => {
+  it("tsc --noEmit passes", () => {
     const r = spawnSync("npx", ["tsc", "--noEmit"], {
       cwd: ROOT,
       encoding: "utf-8",
@@ -53,5 +40,14 @@ describe("scaffolding — segment 1 invariants", () => {
     const ts = JSON.parse(readFileSync(join(ROOT, "tsconfig.json"), "utf-8"));
     const exclude: string[] = ts.exclude ?? [];
     assert.ok(exclude.some((p) => p.startsWith("legacy")));
+  });
+
+  it("CLI prints usage and exits non-zero when called without args", () => {
+    const r = spawnSync("npx", ["tsx", join(ROOT, "src/extract.ts")], {
+      cwd: ROOT,
+      encoding: "utf-8",
+    });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /usage: extract.*\.aral.*--tsconfig/);
   });
 });
