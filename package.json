@@ -13,7 +13,10 @@
     "extract": "npx tsx src/extract.ts",
     "test:unit": "npx tsx --test 'tests/unit/**/*.test.ts'",
     "test:scaffolding": "npx tsx --test 'tests/scaffolding/**/*.test.ts'",
-    "test:all": "npx tsx --test 'tests/unit/**/*.test.ts' 'tests/scaffolding/**/*.test.ts'",
+    "test:conformance": "npx tsx --test 'tests/conformance/**/*.test.ts'",
+    "test:probes": "npx tsx --test 'tests/probes/**/*.test.ts'",
+    "test:fixtures": "npx tsx --test 'tests/fixtures/**/*.test.ts'",
+    "test:all": "npx tsx --test 'tests/unit/**/*.test.ts' 'tests/scaffolding/**/*.test.ts' 'tests/conformance/**/*.test.ts' 'tests/probes/**/*.test.ts' 'tests/fixtures/**/*.test.ts'",
     "test": "npm run test:all",
     "typecheck": "npx tsc --noEmit"
   },
