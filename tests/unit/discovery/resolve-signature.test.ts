@@ -77,4 +77,40 @@ describe("resolve-signature", () => {
       { name: "b", type: "string" },
     ]);
   });
+
+  it("resolves a destructured object parameter", () => {
+    const sig = signatureAroundFirstLiteral(`
+      interface Input { subtotal: number; tax: number }
+      interface Order { total: number }
+      function f({ subtotal, tax }: Input): Order { return { total: subtotal + tax }; }
+    `);
+    assert.deepEqual(sig.parameters, [
+      { name: "subtotal", type: "number" },
+      { name: "tax", type: "number" },
+    ]);
+  });
+
+  it("records the renamed local for destructured-with-rename", () => {
+    const sig = signatureAroundFirstLiteral(`
+      interface Input { subtotal: number; tax: number }
+      interface Order { total: number }
+      function f({ subtotal: s, tax: t }: Input): Order { return { total: s + t }; }
+    `);
+    assert.deepEqual(sig.parameters, [
+      { name: "s", type: "number" },
+      { name: "t", type: "number" },
+    ]);
+  });
+
+  it("mixes identifier and destructured parameters in declaration order", () => {
+    const sig = signatureAroundFirstLiteral(`
+      interface Input { subtotal: number }
+      interface Order { total: number }
+      function f(prefix: string, { subtotal }: Input): Order { return { total: subtotal }; }
+    `);
+    assert.deepEqual(sig.parameters, [
+      { name: "prefix", type: "string" },
+      { name: "subtotal", type: "number" },
+    ]);
+  });
 });

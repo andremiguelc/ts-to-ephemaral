@@ -28,12 +28,24 @@ export function resolveSignature(
 ): ResolvedSignature {
   const parameters: ResolvedSignature["parameters"] = [];
   for (const param of fn.parameters) {
-    if (!ts.isIdentifier(param.name)) continue;
-    const paramType = checker.getTypeAtLocation(param);
-    parameters.push({
-      name: param.name.text,
-      type: checker.typeToString(paramType),
-    });
+    if (ts.isIdentifier(param.name)) {
+      const paramType = checker.getTypeAtLocation(param);
+      parameters.push({
+        name: param.name.text,
+        type: checker.typeToString(paramType),
+      });
+      continue;
+    }
+    if (ts.isObjectBindingPattern(param.name)) {
+      for (const element of param.name.elements) {
+        if (!ts.isIdentifier(element.name)) continue;
+        const elementType = checker.getTypeAtLocation(element);
+        parameters.push({
+          name: element.name.text,
+          type: checker.typeToString(elementType),
+        });
+      }
+    }
   }
 
   const signature = checker.getSignatureFromDeclaration(fn);
