@@ -1,1 +1,4 @@
-export type DiagnosticLabel = "not-yet-admitted" | "target-type-unresolvable";
+export type DiagnosticLabel =
+  | "unsupported-expression"
+  | "target-type-not-readable"
+  | "target-type-not-declared";

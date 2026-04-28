@@ -51,8 +51,10 @@ function createProgram(tsconfigPath: string): ts.Program {
 }
 
 function compareDiagnostic(a: Diagnostic, b: Diagnostic): number {
-  if (a.filePath !== b.filePath) return a.filePath.localeCompare(b.filePath);
-  return a.line - b.line;
+  const aPath = a.filePath ?? "";
+  const bPath = b.filePath ?? "";
+  if (aPath !== bPath) return aPath.localeCompare(bPath);
+  return (a.line ?? 0) - (b.line ?? 0);
 }
 
 const args = parseArgs(process.argv.slice(2));

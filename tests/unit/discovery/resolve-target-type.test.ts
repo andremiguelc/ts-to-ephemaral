@@ -73,7 +73,7 @@ describe("resolve-target-type", () => {
     `);
     assert.equal(result.kind, "unresolvable");
     if (result.kind === "unresolvable") {
-      assert.match(result.reason, /no readable properties/);
+      assert.match(result.reason, /cannot list this type's members/);
     }
   });
 });

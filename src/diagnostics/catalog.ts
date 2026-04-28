@@ -1,15 +1,21 @@
 import type { DiagnosticLabel } from "./labels.js";
 
-export type CatalogEntry = string;
+export type SuggestionBuilder = (declaredName: string) => string;
 
-export const CATALOG: Record<DiagnosticLabel, CatalogEntry> = {
-  "not-yet-admitted":
-    "The assignment site is visible to the parser, but no expression construct is " +
-    "currently admitted that can translate the right-hand side. The site is " +
-    "labelled rather than silently dropped so every assignment in the codebase is " +
-    "accounted for.",
-  "target-type-unresolvable":
-    "The target type's alias chain terminates in a shape the TypeScript checker " +
-    "cannot describe structurally. Replace the alias with an explicit interface or " +
-    "a plain type alias whose members the checker can list directly.",
+export const SUGGESTIONS: Record<DiagnosticLabel, SuggestionBuilder | null> = {
+  "unsupported-expression": null,
+  "target-type-not-readable": (name) =>
+    `Replace with \`interface ${name} { ... }\` or \`type ${name} = { ... }\` ` +
+    `whose members the checker can read.`,
+  "target-type-not-declared": (name) =>
+    `Add \`interface ${name} { ... }\` or \`type ${name} = ...\` somewhere ` +
+    `the parser can read, matching the .aral root prefix.`,
 };
+
+export function suggestionFor(
+  label: DiagnosticLabel,
+  declaredName: string,
+): string | null {
+  const build = SUGGESTIONS[label];
+  return build ? build(declaredName) : null;
+}

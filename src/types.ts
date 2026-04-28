@@ -69,7 +69,8 @@ export interface DiscoveredSite {
 
 export interface Diagnostic {
   label: DiagnosticLabel;
-  reason: string;
-  filePath: string;
-  line: number;
+  message: string;
+  suggestion?: string;
+  filePath?: string;
+  line?: number;
 }

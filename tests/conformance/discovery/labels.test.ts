@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { discover } from "../../unit/discovery/harness.js";
 
 describe("conformance — discovery labels", () => {
-  it("not-yet-admitted: a clean object literal targeting a resolvable interface", () => {
+  it("unsupported-expression: a clean object literal targeting a resolvable interface", () => {
     const { sites, diagnostics } = discover(
       `
         interface Order { total: number; tax: number }
@@ -22,7 +22,7 @@ describe("conformance — discovery labels", () => {
     );
   });
 
-  it("target-type-unresolvable: alias chain ends in a shape with no readable properties", () => {
+  it("target-type-not-readable: alias chain ends in a shape with no listable members", () => {
     const { sites, diagnostics } = discover(
       `
         type Order = Record<string, never>;
@@ -33,7 +33,8 @@ describe("conformance — discovery labels", () => {
     );
     assert.equal(sites.length, 0);
     assert.equal(diagnostics.length, 1);
-    assert.equal(diagnostics[0].label, "target-type-unresolvable");
-    assert.match(diagnostics[0].reason, /no readable properties/);
+    assert.equal(diagnostics[0].label, "target-type-not-readable");
+    assert.match(diagnostics[0].message, /Order/);
+    assert.match(diagnostics[0].message, /cannot list/);
   });
 });

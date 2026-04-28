@@ -2,17 +2,18 @@ import ts from "typescript";
 
 export interface SiteCandidate {
   literal: ts.ObjectLiteralExpression;
-  contextualType: ts.Type;
+  matchedType: ts.Type;
   sourceFile: ts.SourceFile;
 }
 
 export function findSiteCandidates(
   program: ts.Program,
-  targetTypeName: string,
+  targetSymbols: Set<ts.Symbol>,
 ): SiteCandidate[] {
   const checker = program.getTypeChecker();
   const candidates: SiteCandidate[] = [];
-  const target = targetTypeName.toLowerCase();
+
+  if (targetSymbols.size === 0) return candidates;
 
   for (const sourceFile of program.getSourceFiles()) {
     if (sourceFile.isDeclarationFile) continue;
@@ -25,28 +26,37 @@ export function findSiteCandidates(
   function visit(node: ts.Node) {
     if (ts.isObjectLiteralExpression(node)) {
       const contextualType = checker.getContextualType(node);
-      if (contextualType && typeMatchesByName(contextualType, target)) {
-        candidates.push({
-          literal: node,
-          contextualType,
-          sourceFile: node.getSourceFile(),
-        });
+      if (contextualType) {
+        const matched = findMatchingType(contextualType, targetSymbols);
+        if (matched) {
+          candidates.push({
+            literal: node,
+            matchedType: matched,
+            sourceFile: node.getSourceFile(),
+          });
+        }
       }
     }
     ts.forEachChild(node, visit);
   }
 }
 
-function typeMatchesByName(type: ts.Type, target: string): boolean {
-  const alias = type.aliasSymbol?.getName().toLowerCase();
-  if (alias === target) return true;
+function findMatchingType(
+  type: ts.Type,
+  targets: Set<ts.Symbol>,
+): ts.Type | null {
+  const sym = type.getSymbol();
+  if (sym && targets.has(sym)) return type;
 
-  const direct = type.getSymbol()?.getName().toLowerCase();
-  if (direct === target) return true;
+  const alias = type.aliasSymbol;
+  if (alias && targets.has(alias)) return type;
 
   if (type.isUnionOrIntersection()) {
-    return type.types.some((t) => typeMatchesByName(t, target));
+    for (const t of type.types) {
+      const m = findMatchingType(t, targets);
+      if (m) return m;
+    }
   }
 
-  return false;
+  return null;
 }

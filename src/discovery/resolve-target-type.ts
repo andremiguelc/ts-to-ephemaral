@@ -14,7 +14,7 @@ export function resolveTargetType(
   if (!symbol) {
     return {
       kind: "unresolvable",
-      reason: "type has no symbol the TypeChecker can name",
+      reason: "TypeScript cannot identify this type.",
     };
   }
 
@@ -24,7 +24,7 @@ export function resolveTargetType(
   if (properties.length === 0) {
     return {
       kind: "unresolvable",
-      reason: `type ${name} has no readable properties`,
+      reason: "TypeScript cannot list this type's members.",
     };
   }
 
