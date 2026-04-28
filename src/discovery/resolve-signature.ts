@@ -53,5 +53,30 @@ export function resolveSignature(
     ? checker.typeToString(checker.getReturnTypeOfSignature(signature))
     : "unknown";
 
-  return { parameters, returnType };
+  return { name: resolveFunctionName(fn), parameters, returnType };
+}
+
+function resolveFunctionName(fn: ts.SignatureDeclaration): string | null {
+  if (
+    (ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn)) &&
+    fn.name
+  ) {
+    return fn.name.text;
+  }
+  if (
+    (ts.isMethodDeclaration(fn) || ts.isGetAccessorDeclaration(fn) || ts.isSetAccessorDeclaration(fn)) &&
+    ts.isIdentifier(fn.name)
+  ) {
+    return fn.name.text;
+  }
+  if (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) {
+    const parent = fn.parent;
+    if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
+      return parent.name.text;
+    }
+    if (ts.isPropertyAssignment(parent) && ts.isIdentifier(parent.name)) {
+      return parent.name.text;
+    }
+  }
+  return null;
 }

@@ -49,6 +49,7 @@ export interface ResolvedTargetType {
 }
 
 export interface ResolvedSignature {
+  name: string | null;
   parameters: Array<{ name: string; type: string }>;
   returnType: string;
 }

@@ -1,31 +1,37 @@
-import type { Diagnostic, DiscoveredSite } from "./types.js";
+import type { CAE } from "./canonical-ast.js";
+import type { Diagnostic, DiscoveredSite, SiteTarget } from "./types.js";
 import { suggestionFor } from "./diagnostics/catalog.js";
+import { normalize } from "./normalize/index.js";
 
-export interface Rejected {
-  kind: "rejected";
-  diagnostic: Diagnostic;
+export type TargetResult =
+  | { kind: "accepted"; fieldName: string; cae: CAE }
+  | { kind: "rejected"; fieldName: string; diagnostic: Diagnostic };
+
+export interface SiteGateResult {
+  site: DiscoveredSite;
+  targets: TargetResult[];
 }
 
-export type GateResult = Rejected;
+export function gate(site: DiscoveredSite): SiteGateResult {
+  const targets = site.targets.map((t) => gateTarget(site, t));
+  return { site, targets };
+}
 
-export function gate(site: DiscoveredSite): GateResult {
-  const name = site.targetType.name;
-  const fields = site.targets.map((t) => t.fieldName).join(", ");
-  const subject =
-    site.targets.length === 1
-      ? `${name}.${fields}`
-      : `${name} at fields ${fields}`;
-  const label = "unsupported-expression" as const;
-  const suggestion = suggestionFor(label, name);
+function gateTarget(site: DiscoveredSite, target: SiteTarget): TargetResult {
+  const normalized = normalize(target.expression);
 
-  return {
-    kind: "rejected",
-    diagnostic: {
-      label,
-      message: `${subject} — cannot translate this assignment expression.`,
-      ...(suggestion ? { suggestion } : {}),
-      filePath: site.filePath,
-      line: site.line,
-    },
+  if (normalized.kind === "accepted") {
+    return { kind: "accepted", fieldName: target.fieldName, cae: normalized.cae };
+  }
+
+  const subject = `${site.targetType.name}.${target.fieldName}`;
+  const suggestion = suggestionFor(normalized.label, site.targetType.name);
+  const diagnostic: Diagnostic = {
+    label: normalized.label,
+    message: `${subject} — ${normalized.reason}`,
+    ...(suggestion ? { suggestion } : {}),
+    filePath: site.filePath,
+    line: site.line,
   };
+  return { kind: "rejected", fieldName: target.fieldName, diagnostic };
 }

@@ -62,7 +62,7 @@ export function discoverSites(
     const enclosing = findEnclosingFunction(anchor);
     const signature = enclosing
       ? resolveSignature(enclosing, checker)
-      : { parameters: [], returnType: "unknown" };
+      : { name: null, parameters: [], returnType: "unknown" };
 
     sites.push({
       filePath,

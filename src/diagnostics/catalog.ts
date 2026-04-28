@@ -4,6 +4,7 @@ export type SuggestionBuilder = (declaredName: string) => string;
 
 export const SUGGESTIONS: Record<DiagnosticLabel, SuggestionBuilder | null> = {
   "unsupported-expression": null,
+  "unsupported-literal": null,
   "target-type-not-readable": (name) =>
     `Replace with \`interface ${name} { ... }\` or \`type ${name} = { ... }\` ` +
     `whose members the checker can read.`,
