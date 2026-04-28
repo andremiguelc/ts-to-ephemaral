@@ -1,6 +1,6 @@
-// Lifted from strapi/packages/utils/upgrade/src/modules/timer/.
-// Demonstrates two construction shapes against a named interface:
-// (a) a factory returning a typed literal, (b) a typed-const declaration.
+// Two construction shapes against a named interface:
+// (a) a factory function returning a typed literal,
+// (b) a typed-const declaration whose value is a literal.
 
 export interface TimeInterval {
   start: number;

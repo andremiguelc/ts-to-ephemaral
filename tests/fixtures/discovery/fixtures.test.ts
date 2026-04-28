@@ -10,23 +10,23 @@ function read(name: string): string {
   return readFileSync(join(ROOT, name), "utf-8");
 }
 
-describe("real-codebase fixtures — discovery", () => {
-  it("cal.com SSRFValidationResult: every return literal becomes a labelled site", () => {
-    const code = read("calcom-validation-result.ts");
-    const { sites, diagnostics } = discover(code, "SSRFValidationResult", [
+describe("fixtures — discovery patterns", () => {
+  it("validation-result: every return literal becomes a labelled site", () => {
+    const code = read("validation-result.ts");
+    const { sites, diagnostics } = discover(code, "ValidationResult", [
       "isValid",
       "error",
     ]);
     assert.equal(diagnostics.length, 0);
     assert.equal(sites.length, 4);
     for (const site of sites) {
-      assert.equal(site.targetType.name, "SSRFValidationResult");
+      assert.equal(site.targetType.name, "ValidationResult");
       assert.ok(site.targets.length >= 1);
     }
   });
 
-  it("strapi TimeInterval: factory return and typed const both surface as sites", () => {
-    const code = read("strapi-time-interval.ts");
+  it("time-interval: factory return and typed const both surface as sites", () => {
+    const code = read("time-interval.ts");
     const { sites, diagnostics } = discover(code, "TimeInterval", ["start", "end"]);
     assert.equal(diagnostics.length, 0);
     assert.equal(sites.length, 2);
@@ -37,5 +37,36 @@ describe("real-codebase fixtures — discovery", () => {
         ["end", "start"],
       );
     }
+  });
+
+  it("aliased-pick: the aliased utility-type surfaces with its picked fields", () => {
+    const code = read("aliased-pick.ts");
+    const { sites, diagnostics } = discover(code, "ICSCalendarEvent", [
+      "uid",
+      "startTime",
+      "endTime",
+      "title",
+    ]);
+    assert.equal(diagnostics.length, 0);
+    assert.equal(sites.length, 1);
+    assert.equal(sites[0].targetType.name, "ICSCalendarEvent");
+    assert.deepEqual(
+      sites[0].targets.map((t) => t.fieldName).sort(),
+      ["endTime", "startTime", "title", "uid"],
+    );
+  });
+
+  it("destructured-handler: destructured params flow through the signature", () => {
+    const code = read("destructured-handler.ts");
+    const { sites, diagnostics } = discover(code, "PermissionResult", [
+      "authorized",
+      "reason",
+    ]);
+    assert.equal(diagnostics.length, 0);
+    assert.equal(sites.length, 1);
+    assert.deepEqual(
+      sites[0].signature.parameters.map((p) => p.name).sort(),
+      ["ctx", "input"],
+    );
   });
 });
