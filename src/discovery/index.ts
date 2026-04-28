@@ -2,7 +2,7 @@ import ts from "typescript";
 import type { AralTarget } from "../aral-reader.js";
 import type { Diagnostic, DiscoveredSite, SiteTarget } from "../types.js";
 import { suggestionFor } from "../diagnostics/catalog.js";
-import { findSiteCandidates } from "./find-sites.js";
+import { findSiteCandidates, type SiteCandidate } from "./find-sites.js";
 import { resolveTargetSymbols } from "./resolve-target-symbols.js";
 import { resolveTargetType } from "./resolve-target-type.js";
 import { findEnclosingFunction, resolveSignature } from "./resolve-signature.js";
@@ -37,11 +37,12 @@ export function discoverSites(
   const candidates = findSiteCandidates(program, targetSymbols);
 
   for (const candidate of candidates) {
-    const { literal, matchedType, sourceFile } = candidate;
+    const anchor = anchorNode(candidate);
+    const sourceFile = candidate.sourceFile;
     const filePath = sourceFile.fileName;
-    const line = sourceFile.getLineAndCharacterOfPosition(literal.getStart()).line + 1;
+    const line = sourceFile.getLineAndCharacterOfPosition(anchor.getStart()).line + 1;
 
-    const resolved = resolveTargetType(matchedType, checker, literal);
+    const resolved = resolveTargetType(candidate.matchedType, checker, anchor);
     if (resolved.kind === "unresolvable") {
       const label = "target-type-not-readable" as const;
       const suggestion = suggestionFor(label, canonicalName);
@@ -55,10 +56,10 @@ export function discoverSites(
       continue;
     }
 
-    const targets = collectTargets(literal, declaredFields);
+    const targets = collectTargets(candidate, declaredFields);
     if (targets.length === 0) continue;
 
-    const enclosing = findEnclosingFunction(literal);
+    const enclosing = findEnclosingFunction(anchor);
     const signature = enclosing
       ? resolveSignature(enclosing, checker)
       : { parameters: [], returnType: "unknown" };
@@ -76,7 +77,21 @@ export function discoverSites(
   return { sites, diagnostics };
 }
 
+function anchorNode(candidate: SiteCandidate): ts.Node {
+  return candidate.kind === "literal" ? candidate.literal : candidate.binaryExpr;
+}
+
 function collectTargets(
+  candidate: SiteCandidate,
+  declaredFields: Set<string>,
+): SiteTarget[] {
+  if (candidate.kind === "literal") {
+    return collectLiteralTargets(candidate.literal, declaredFields);
+  }
+  return collectAssignmentTargets(candidate.binaryExpr, declaredFields);
+}
+
+function collectLiteralTargets(
   literal: ts.ObjectLiteralExpression,
   declaredFields: Set<string>,
 ): SiteTarget[] {
@@ -97,4 +112,15 @@ function collectTargets(
     }
   }
   return targets;
+}
+
+function collectAssignmentTargets(
+  binaryExpr: ts.BinaryExpression,
+  declaredFields: Set<string>,
+): SiteTarget[] {
+  if (!ts.isPropertyAccessExpression(binaryExpr.left)) return [];
+  if (!ts.isIdentifier(binaryExpr.left.name)) return [];
+  const name = binaryExpr.left.name.text;
+  if (!declaredFields.has(name)) return [];
+  return [{ fieldName: name, expression: binaryExpr.right }];
 }

@@ -13,9 +13,12 @@ export function resolveTargetSymbols(
     if (sourceFile.fileName.includes("node_modules")) continue;
 
     for (const statement of sourceFile.statements) {
-      if (!ts.isInterfaceDeclaration(statement) && !ts.isTypeAliasDeclaration(statement)) {
-        continue;
-      }
+      const isTypeDecl =
+        ts.isInterfaceDeclaration(statement) ||
+        ts.isTypeAliasDeclaration(statement) ||
+        ts.isClassDeclaration(statement);
+      if (!isTypeDecl) continue;
+      if (!statement.name) continue;
       if (statement.name.text.toLowerCase() !== target) continue;
 
       const declSymbol = checker.getSymbolAtLocation(statement.name);

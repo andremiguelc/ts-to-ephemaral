@@ -1,10 +1,18 @@
 import ts from "typescript";
 
-export interface SiteCandidate {
-  literal: ts.ObjectLiteralExpression;
-  matchedType: ts.Type;
-  sourceFile: ts.SourceFile;
-}
+export type SiteCandidate =
+  | {
+      kind: "literal";
+      literal: ts.ObjectLiteralExpression;
+      matchedType: ts.Type;
+      sourceFile: ts.SourceFile;
+    }
+  | {
+      kind: "assignment";
+      binaryExpr: ts.BinaryExpression;
+      matchedType: ts.Type;
+      sourceFile: ts.SourceFile;
+    };
 
 export function findSiteCandidates(
   program: ts.Program,
@@ -30,11 +38,27 @@ export function findSiteCandidates(
         const matched = findMatchingType(contextualType, targetSymbols);
         if (matched) {
           candidates.push({
+            kind: "literal",
             literal: node,
             matchedType: matched,
             sourceFile: node.getSourceFile(),
           });
         }
+      }
+    } else if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left)
+    ) {
+      const receiverType = checker.getTypeAtLocation(node.left.expression);
+      const matched = findMatchingType(receiverType, targetSymbols);
+      if (matched) {
+        candidates.push({
+          kind: "assignment",
+          binaryExpr: node,
+          matchedType: matched,
+          sourceFile: node.getSourceFile(),
+        });
       }
     }
     ts.forEachChild(node, visit);
