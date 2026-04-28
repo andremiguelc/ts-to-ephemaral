@@ -104,8 +104,75 @@ describe("find-sites", () => {
       function f(): Order { return { total: 1 }; }
     `);
     const [c] = find(program, "Order");
+    assert.equal(c.kind, "literal");
+    if (c.kind !== "literal") return;
     const line = sourceFile.getLineAndCharacterOfPosition(c.literal.getStart()).line + 1;
     assert.equal(c.sourceFile.fileName, "/virtual/snippet.ts");
     assert.equal(line, 3);
+  });
+
+  it("finds a `this.field = expr` assignment in a constructor", () => {
+    const { program } = compileSnippet(`
+      interface Order { total: number }
+      class Service {
+        order: Order;
+        constructor(o: Order) {
+          this.order = o;
+        }
+      }
+    `);
+    const candidates = find(program, "Service");
+    assert.equal(candidates.length, 1);
+    assert.equal(candidates[0].kind, "assignment");
+  });
+
+  it("finds an `obj.field = expr` assignment on a typed parameter", () => {
+    const { program } = compileSnippet(`
+      interface Order { total: number }
+      function reset(o: Order, n: number): void {
+        o.total = n;
+      }
+    `);
+    const candidates = find(program, "Order");
+    assert.equal(candidates.length, 1);
+    assert.equal(candidates[0].kind, "assignment");
+  });
+
+  it("finds a multi-hop LHS where the receiver of the final access matches", () => {
+    const { program } = compileSnippet(`
+      interface Order { total: number }
+      class Holder { order: Order = { total: 0 }; }
+      function bump(h: Holder, n: number): void {
+        h.order.total = n;
+      }
+    `);
+    const candidates = find(program, "Order");
+    const assigns = candidates.filter((c) => c.kind === "assignment");
+    assert.equal(assigns.length, 1);
+  });
+
+  it("does not find a `this.field = expr` when the class type is not the target", () => {
+    const { program } = compileSnippet(`
+      interface Order { total: number }
+      class Other {
+        value: number = 0;
+        bump(n: number): void {
+          this.value = n;
+        }
+      }
+    `);
+    const candidates = find(program, "Order");
+    assert.equal(candidates.filter((c) => c.kind === "assignment").length, 0);
+  });
+
+  it("ignores compound assignments like `+=`", () => {
+    const { program } = compileSnippet(`
+      interface Order { total: number }
+      function bump(o: Order, n: number): void {
+        o.total += n;
+      }
+    `);
+    const candidates = find(program, "Order");
+    assert.equal(candidates.filter((c) => c.kind === "assignment").length, 0);
   });
 });

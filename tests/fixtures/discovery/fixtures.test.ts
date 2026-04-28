@@ -69,4 +69,26 @@ describe("fixtures — discovery patterns", () => {
       ["ctx", "input"],
     );
   });
+
+  it("class-constructor-assignments: each `this.field = expr` line is its own site", () => {
+    const code = read("class-constructor-assignments.ts");
+    const { sites, diagnostics } = discover(code, "OrderService", [
+      "logger",
+      "repository",
+      "defaultLimit",
+    ]);
+    assert.equal(diagnostics.length, 0);
+    assert.equal(sites.length, 3);
+    assert.deepEqual(
+      sites.map((s) => s.targets[0].fieldName).sort(),
+      ["defaultLimit", "logger", "repository"],
+    );
+    for (const site of sites) {
+      assert.equal(site.targetType.name, "OrderService");
+      assert.deepEqual(
+        site.signature.parameters.map((p) => p.name),
+        ["logger", "repository", "limit"],
+      );
+    }
+  });
 });

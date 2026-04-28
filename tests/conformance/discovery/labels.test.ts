@@ -37,4 +37,22 @@ describe("conformance — discovery labels", () => {
     assert.match(diagnostics[0].message, /Order/);
     assert.match(diagnostics[0].message, /cannot list/);
   });
+
+  it("target-type-not-declared: the .aral target name has no declaration in the program", () => {
+    const { sites, diagnostics } = discover(
+      `
+        interface Other { value: number }
+        function f(): Other { return { value: 1 }; }
+      `,
+      "Order",
+      ["total"],
+    );
+    assert.equal(sites.length, 0);
+    assert.equal(diagnostics.length, 1);
+    assert.equal(diagnostics[0].label, "target-type-not-declared");
+    assert.equal(diagnostics[0].filePath, undefined);
+    assert.equal(diagnostics[0].line, undefined);
+    assert.match(diagnostics[0].message, /No interface or type alias named Order/);
+    assert.match(diagnostics[0].suggestion ?? "", /Add `interface Order/);
+  });
 });
