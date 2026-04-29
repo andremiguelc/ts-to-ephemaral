@@ -5,6 +5,7 @@ import type { ResolvedSignature, ResolvedTargetType } from "../types.js";
 import { stripSugar } from "./strip-sugar.js";
 import { recognizeLiteral } from "./recognize-literal.js";
 import { recognizeFieldRef } from "./recognize-field-ref.js";
+import { recognizeParamRef } from "./recognize-param-ref.js";
 
 export interface NormalizeContext {
   checker: ts.TypeChecker;
@@ -27,6 +28,9 @@ export function normalize(
 
   const fieldRef = recognizeFieldRef(stripped, ctx);
   if (fieldRef.kind !== "miss") return fieldRef;
+
+  const paramRef = recognizeParamRef(stripped, ctx);
+  if (paramRef.kind !== "miss") return paramRef;
 
   return {
     kind: "rejected",
