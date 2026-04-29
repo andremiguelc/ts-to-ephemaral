@@ -1,7 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { normalize } from "../../../src/normalize/index.js";
-import { expressionInsideFirstObjectLiteral, stubCtx } from "./harness.js";
+import {
+  compileWithFixture,
+  expressionInsideFirstObjectLiteral,
+  findField,
+  makeCtx,
+  stubCtx,
+} from "./harness.js";
 
 describe("normalize/index — dispatcher", () => {
   it("admits a numeric literal as Lit through the dispatcher", () => {
@@ -48,17 +54,17 @@ describe("normalize/index — dispatcher", () => {
     assert.equal(r.label, "unsupported-literal");
   });
 
-  it("rejects an identifier with unsupported-expression (no recognizer matches yet)", () => {
-    const expr = expressionInsideFirstObjectLiteral(
+  it("admits a bare number parameter as ParamRef through the dispatcher", () => {
+    const fixture = compileWithFixture(
       `interface Order { total: number }
        function f(x: number): Order { return { total: x }; }`,
-      "total",
     );
-    const r = normalize(expr, stubCtx());
-    assert.equal(r.kind, "rejected");
-    if (r.kind !== "rejected") return;
-    assert.equal(r.label, "unsupported-expression");
-    assert.match(r.reason, /not yet supported/);
+    const expr = findField(fixture.sourceFile, "total");
+    const ctx = makeCtx(fixture.checker, "Order", { total: "number" });
+    const r = normalize(expr, ctx);
+    assert.equal(r.kind, "accepted");
+    if (r.kind !== "accepted") return;
+    assert.deepEqual(r.cae, { kind: "ParamRef", name: "x" });
   });
 
   it("rejects a binary expression with unsupported-expression", () => {

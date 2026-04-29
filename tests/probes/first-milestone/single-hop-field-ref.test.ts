@@ -75,16 +75,15 @@ describe("probes — first-milestone — single-hop field reference", () => {
     );
   });
 
-  it("an identifier in value position falls through to unsupported-expression (not field-ref's job)", () => {
-    // A bare identifier in value position is not a property access; field-ref misses.
-    // Once admission #3 (ParamRef) lands, this case admits — until then, dispatcher fallback fires.
-    assertRejected(
-      runProbe(
-        `interface Order { total: number; subtotal: number }
-         function f(order: Order, x: number): Order { return { total: x }; }`,
-      ),
-      "unsupported-expression",
+  it("an identifier in value position is not field-ref's concern", () => {
+    // A bare identifier is not a property access; field-ref misses and the
+    // dispatcher hands off to the next recognizer. With param-ref admitted,
+    // this primitive number parameter now accepts cleanly.
+    const t = runProbe(
+      `interface Order { total: number; subtotal: number }
+       function f(order: Order, x: number): Order { return { total: x }; }`,
     );
+    assert.equal(t.kind, "accepted");
   });
 
   it("renamed import on the input parameter type still resolves by symbol identity", () => {

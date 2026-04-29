@@ -26,7 +26,7 @@ describe("ir-emit", () => {
   it("returns null when no targets accepted", () => {
     const { sites, checker } = discover(
       `interface Order { total: number }
-       function f(x: number): Order { return { total: x }; }`,
+       function f(s: string): Order { return { total: s as any }; }`,
       "Order",
       ["total"],
     );
@@ -38,7 +38,7 @@ describe("ir-emit", () => {
   it("emits only the accepted targets when the site is partial", () => {
     const { sites, checker } = discover(
       `interface Pair { a: number; b: number }
-       function f(x: number): Pair { return { a: 7, b: x }; }`,
+       function f(s: string): Pair { return { a: 7, b: s as any }; }`,
       "Pair",
       ["a", "b"],
     );
@@ -48,6 +48,19 @@ describe("ir-emit", () => {
     assert.deepEqual(fn!.inputFields, ["a"]);
     assert.equal(fn!.assigns.length, 1);
     assert.deepEqual(fn!.assigns[0], { fieldName: "a", value: { lit: 7 } });
+  });
+
+  it("emits ParamRef as field-shape and lists the name in params", () => {
+    const { sites, checker } = discover(
+      `interface Order { total: number }
+       function f(newTotal: number): Order { return { total: newTotal }; }`,
+      "Order",
+      ["total"],
+    );
+    const fn = emitAralFn(gate(sites[0], checker));
+    assert.ok(fn);
+    assert.deepEqual(fn!.assigns[0].value, { field: { name: "newTotal" } });
+    assert.deepEqual(fn!.params, ["newTotal"]);
   });
 
   it("synthesizes a name as <functionName>-<fieldName>", () => {
