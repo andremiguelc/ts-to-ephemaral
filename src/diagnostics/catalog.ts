@@ -15,6 +15,16 @@ export const SUGGESTIONS: Record<DiagnosticLabel, SuggestionBuilder | null> = {
   "target-type-not-declared": (name) =>
     `Add \`interface ${name} { ... }\` or \`type ${name} = ...\` somewhere ` +
     `the parser can read, matching the .aral root prefix.`,
+  "any-typed-parameter": () =>
+    `Declare the parameter's type. If the value is a number, annotate it as ` +
+    `\`number\`; otherwise pick a concrete type so invariants can apply.`,
+  "nullable-parameter": () =>
+    `Either narrow the value with an \`if\` guard before the assignment, ` +
+    `or declare the parameter as strictly \`number\` (drop the \`| null\`, ` +
+    `\`| undefined\`, or \`?\`).`,
+  "param-not-primitive": () =>
+    `Reduce or project the parameter into a single \`number\` first, then ` +
+    `assign that scalar.`,
 };
 
 export function suggestionFor(

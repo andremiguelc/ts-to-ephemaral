@@ -4,4 +4,7 @@ export type DiagnosticLabel =
   | "chained-field-access"
   | "unknown-field"
   | "target-type-not-readable"
-  | "target-type-not-declared";
+  | "target-type-not-declared"
+  | "any-typed-parameter"
+  | "nullable-parameter"
+  | "param-not-primitive";
