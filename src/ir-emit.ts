@@ -10,14 +10,16 @@ export function emitAralFn(result: SiteGateResult): AralFn | null {
 
   const site = result.site;
   const assignedFields = accepted.map((a) => a.fieldName);
-  const referencedFields = collectReferencedFields(accepted.map((a) => a.cae));
+  const caes = accepted.map((a) => a.cae);
+  const referencedFields = collectReferencedFields(caes);
   const inputFields = uniq([...assignedFields, ...referencedFields]);
+  const params = uniq(collectParamNames(caes));
 
   return {
     name: synthesizeName(site.signature.name, site.line, assignedFields),
     inputType: site.targetType.name,
     inputFields,
-    params: [],
+    params,
     assigns: accepted.map((a) => ({
       fieldName: a.fieldName,
       value: caeToExpr(a.cae),
@@ -31,6 +33,8 @@ export function caeToExpr(cae: CAE): Expr {
       return { lit: cae.value };
     case "FieldRef":
       return { field: { name: cae.field } };
+    case "ParamRef":
+      return { field: { name: cae.name } };
   }
 }
 
@@ -40,6 +44,14 @@ function collectReferencedFields(caes: CAE[]): string[] {
     if (cae.kind === "FieldRef") fields.push(cae.field);
   }
   return fields;
+}
+
+function collectParamNames(caes: CAE[]): string[] {
+  const names: string[] = [];
+  for (const cae of caes) {
+    if (cae.kind === "ParamRef") names.push(cae.name);
+  }
+  return names;
 }
 
 function uniq(items: string[]): string[] {
