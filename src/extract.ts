@@ -120,13 +120,14 @@ if (!args) {
 
 const target = readAralFile(readFileSync(args.aralFile, "utf-8"));
 const program = createProgram(args.tsconfigPath);
+const checker = program.getTypeChecker();
 const result = discoverSites(target, program);
 
 const diagnostics: Diagnostic[] = [...result.diagnostics];
 const accepted: Array<{ result: SiteGateResult; aralFn: AralFn; outPath: string }> = [];
 
 for (const site of result.sites) {
-  const gated = gate(site);
+  const gated = gate(site, checker);
   for (const t of gated.targets) {
     if (t.kind === "rejected") diagnostics.push(t.diagnostic);
   }

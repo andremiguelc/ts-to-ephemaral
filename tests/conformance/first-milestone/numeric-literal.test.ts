@@ -7,7 +7,7 @@ import type { AralFn, Expr } from "../../../src/types.js";
 
 describe("conformance — first-milestone — numeric literal", () => {
   it("positive: a numeric literal admits as Lit and emits valid IR", () => {
-    const { sites, diagnostics } = discover(
+    const { sites, diagnostics, checker } = discover(
       `interface Order { total: number }
        function f(): Order { return { total: 42 }; }`,
       "Order",
@@ -15,7 +15,7 @@ describe("conformance — first-milestone — numeric literal", () => {
     );
     assert.equal(diagnostics.length, 0);
     assert.equal(sites.length, 1);
-    const result = gate(sites[0]);
+    const result = gate(sites[0], checker);
     assert.equal(result.targets[0].kind, "accepted");
 
     const fn = emitAralFn(result);
@@ -24,13 +24,13 @@ describe("conformance — first-milestone — numeric literal", () => {
   });
 
   it("negative: a string literal at the same site rejects with unsupported-literal", () => {
-    const { sites } = discover(
+    const { sites, checker } = discover(
       `interface Order { total: any }
        function f(): Order { return { total: "42" }; }`,
       "Order",
       ["total"],
     );
-    const result = gate(sites[0]);
+    const result = gate(sites[0], checker);
     const t = result.targets[0];
     assert.equal(t.kind, "rejected");
     if (t.kind !== "rejected") return;
@@ -41,13 +41,13 @@ describe("conformance — first-milestone — numeric literal", () => {
   });
 
   it("ir round-trip: emitted JSON parses back to a structurally-identical AralFn", () => {
-    const { sites } = discover(
+    const { sites, checker } = discover(
       `interface Order { total: number }
        function f(): Order { return { total: 7 }; }`,
       "Order",
       ["total"],
     );
-    const fn = emitAralFn(gate(sites[0]));
+    const fn = emitAralFn(gate(sites[0], checker));
     assert.ok(fn);
     const round = JSON.parse(JSON.stringify(fn)) as AralFn;
     assert.deepEqual(round, fn);

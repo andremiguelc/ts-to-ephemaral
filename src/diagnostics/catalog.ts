@@ -5,6 +5,10 @@ export type SuggestionBuilder = (declaredName: string) => string;
 export const SUGGESTIONS: Record<DiagnosticLabel, SuggestionBuilder | null> = {
   "unsupported-expression": null,
   "unsupported-literal": null,
+  "chained-field-access": () =>
+    `Bind the intermediate hop to a single-hop \`const\` first ` +
+    `(e.g. \`const customer = order.customer; ... customer.id\`).`,
+  "unknown-field": null,
   "target-type-not-readable": (name) =>
     `Replace with \`interface ${name} { ... }\` or \`type ${name} = { ... }\` ` +
     `whose members the checker can read.`,

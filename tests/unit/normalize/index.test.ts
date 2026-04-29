@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { normalize } from "../../../src/normalize/index.js";
-import { expressionInsideFirstObjectLiteral } from "./harness.js";
+import { expressionInsideFirstObjectLiteral, stubCtx } from "./harness.js";
 
 describe("normalize/index — dispatcher", () => {
   it("admits a numeric literal as Lit through the dispatcher", () => {
@@ -10,7 +10,7 @@ describe("normalize/index — dispatcher", () => {
        function f(): Order { return { total: 42 }; }`,
       "total",
     );
-    const r = normalize(expr);
+    const r = normalize(expr, stubCtx());
     assert.equal(r.kind, "accepted");
     if (r.kind !== "accepted") return;
     assert.deepEqual(r.cae, { kind: "Lit", value: 42 });
@@ -22,7 +22,7 @@ describe("normalize/index — dispatcher", () => {
        function f(): Order { return { total: ((42)) }; }`,
       "total",
     );
-    const r = normalize(expr);
+    const r = normalize(expr, stubCtx());
     assert.equal(r.kind, "accepted");
   });
 
@@ -32,7 +32,7 @@ describe("normalize/index — dispatcher", () => {
        function f(): Order { return { total: 42 as const }; }`,
       "total",
     );
-    const r = normalize(expr);
+    const r = normalize(expr, stubCtx());
     assert.equal(r.kind, "accepted");
   });
 
@@ -42,7 +42,7 @@ describe("normalize/index — dispatcher", () => {
        function f(): Order { return { total: "42" }; }`,
       "total",
     );
-    const r = normalize(expr);
+    const r = normalize(expr, stubCtx());
     assert.equal(r.kind, "rejected");
     if (r.kind !== "rejected") return;
     assert.equal(r.label, "unsupported-literal");
@@ -54,7 +54,7 @@ describe("normalize/index — dispatcher", () => {
        function f(x: number): Order { return { total: x }; }`,
       "total",
     );
-    const r = normalize(expr);
+    const r = normalize(expr, stubCtx());
     assert.equal(r.kind, "rejected");
     if (r.kind !== "rejected") return;
     assert.equal(r.label, "unsupported-expression");
@@ -67,7 +67,7 @@ describe("normalize/index — dispatcher", () => {
        function f(): Order { return { total: 1 + 1 }; }`,
       "total",
     );
-    const r = normalize(expr);
+    const r = normalize(expr, stubCtx());
     assert.equal(r.kind, "rejected");
     if (r.kind !== "rejected") return;
     assert.equal(r.label, "unsupported-expression");
@@ -79,7 +79,7 @@ describe("normalize/index — dispatcher", () => {
        function f(): Order { return { total: 0.5 }; }`,
       "total",
     );
-    const r = normalize(expr);
+    const r = normalize(expr, stubCtx());
     assert.equal(r.kind, "rejected");
     if (r.kind !== "rejected") return;
     assert.equal(r.label, "unsupported-literal");

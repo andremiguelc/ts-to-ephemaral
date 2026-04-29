@@ -67,7 +67,8 @@ export function discover(
   code: string,
   typeName: string,
   fieldNames: string[],
-): DiscoveryResult {
+): DiscoveryResult & { checker: ts.TypeChecker } {
   const { program } = compileSnippet(code);
-  return discoverSites(makeTarget(typeName, fieldNames), program);
+  const checker = program.getTypeChecker();
+  return { ...discoverSites(makeTarget(typeName, fieldNames), program), checker };
 }

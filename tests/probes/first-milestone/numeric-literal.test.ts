@@ -4,8 +4,8 @@ import { gate, type TargetResult } from "../../../src/subset-gate.js";
 import { discover } from "../../unit/discovery/harness.js";
 
 function runProbe(snippet: string): TargetResult {
-  const { sites } = discover(snippet, "Order", ["total"]);
-  const result = gate(sites[0]);
+  const { sites, checker } = discover(snippet, "Order", ["total"]);
+  const result = gate(sites[0], checker);
   return result.targets[0];
 }
 

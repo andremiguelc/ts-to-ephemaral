@@ -9,11 +9,14 @@ export function emitAralFn(result: SiteGateResult): AralFn | null {
   if (accepted.length === 0) return null;
 
   const site = result.site;
-  const fields = accepted.map((a) => a.fieldName);
+  const assignedFields = accepted.map((a) => a.fieldName);
+  const referencedFields = collectReferencedFields(accepted.map((a) => a.cae));
+  const inputFields = uniq([...assignedFields, ...referencedFields]);
+
   return {
-    name: synthesizeName(site.signature.name, site.line, fields),
+    name: synthesizeName(site.signature.name, site.line, assignedFields),
     inputType: site.targetType.name,
-    inputFields: fields,
+    inputFields,
     params: [],
     assigns: accepted.map((a) => ({
       fieldName: a.fieldName,
@@ -26,7 +29,21 @@ export function caeToExpr(cae: CAE): Expr {
   switch (cae.kind) {
     case "Lit":
       return { lit: cae.value };
+    case "FieldRef":
+      return { field: { name: cae.field } };
   }
+}
+
+function collectReferencedFields(caes: CAE[]): string[] {
+  const fields: string[] = [];
+  for (const cae of caes) {
+    if (cae.kind === "FieldRef") fields.push(cae.field);
+  }
+  return fields;
+}
+
+function uniq(items: string[]): string[] {
+  return [...new Set(items)];
 }
 
 function synthesizeName(

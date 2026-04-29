@@ -1,7 +1,8 @@
+import ts from "typescript";
 import type { CAE } from "./canonical-ast.js";
 import type { Diagnostic, DiscoveredSite, SiteTarget } from "./types.js";
 import { suggestionFor } from "./diagnostics/catalog.js";
-import { normalize } from "./normalize/index.js";
+import { normalize, type NormalizeContext } from "./normalize/index.js";
 
 export type TargetResult =
   | { kind: "accepted"; fieldName: string; cae: CAE }
@@ -12,13 +13,25 @@ export interface SiteGateResult {
   targets: TargetResult[];
 }
 
-export function gate(site: DiscoveredSite): SiteGateResult {
-  const targets = site.targets.map((t) => gateTarget(site, t));
+export function gate(
+  site: DiscoveredSite,
+  checker: ts.TypeChecker,
+): SiteGateResult {
+  const ctx: NormalizeContext = {
+    checker,
+    inputType: site.targetType,
+    signature: site.signature,
+  };
+  const targets = site.targets.map((t) => gateTarget(site, ctx, t));
   return { site, targets };
 }
 
-function gateTarget(site: DiscoveredSite, target: SiteTarget): TargetResult {
-  const normalized = normalize(target.expression);
+function gateTarget(
+  site: DiscoveredSite,
+  ctx: NormalizeContext,
+  target: SiteTarget,
+): TargetResult {
+  const normalized = normalize(target.expression, ctx);
 
   if (normalized.kind === "accepted") {
     return { kind: "accepted", fieldName: target.fieldName, cae: normalized.cae };

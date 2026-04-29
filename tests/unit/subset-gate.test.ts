@@ -5,14 +5,14 @@ import { discover } from "./discovery/harness.js";
 
 describe("subset-gate", () => {
   it("admits a single numeric-literal target", () => {
-    const { sites } = discover(
+    const { sites, checker } = discover(
       `interface Order { total: number }
        function f(): Order { return { total: 42 }; }`,
       "Order",
       ["total"],
     );
     assert.equal(sites.length, 1);
-    const r = gate(sites[0]);
+    const r = gate(sites[0], checker);
     assert.equal(r.targets.length, 1);
     assert.equal(r.targets[0].kind, "accepted");
     if (r.targets[0].kind !== "accepted") return;
@@ -20,14 +20,14 @@ describe("subset-gate", () => {
   });
 
   it("rejects a target whose expression is not yet admitted (identifier)", () => {
-    const { sites } = discover(
+    const { sites, checker } = discover(
       `interface Order { total: number }
        function f(x: number): Order { return { total: x }; }`,
       "Order",
       ["total"],
     );
     assert.equal(sites.length, 1);
-    const r = gate(sites[0]);
+    const r = gate(sites[0], checker);
     assert.equal(r.targets.length, 1);
     assert.equal(r.targets[0].kind, "rejected");
     if (r.targets[0].kind !== "rejected") return;
@@ -36,14 +36,14 @@ describe("subset-gate", () => {
   });
 
   it("rejects a string literal target with unsupported-literal", () => {
-    const { sites } = discover(
+    const { sites, checker } = discover(
       `interface Order { total: any }
        function f(): Order { return { total: "42" }; }`,
       "Order",
       ["total"],
     );
     assert.equal(sites.length, 1);
-    const r = gate(sites[0]);
+    const r = gate(sites[0], checker);
     assert.equal(r.targets[0].kind, "rejected");
     if (r.targets[0].kind !== "rejected") return;
     assert.equal(r.targets[0].diagnostic.label, "unsupported-literal");
@@ -51,14 +51,14 @@ describe("subset-gate", () => {
   });
 
   it("preserves coverage across mixed targets — one accepts, one rejects", () => {
-    const { sites } = discover(
+    const { sites, checker } = discover(
       `interface Pair { a: number; b: number }
        function f(x: number): Pair { return { a: 7, b: x }; }`,
       "Pair",
       ["a", "b"],
     );
     assert.equal(sites.length, 1);
-    const r = gate(sites[0]);
+    const r = gate(sites[0], checker);
     assert.equal(r.targets.length, 2);
     const byField = Object.fromEntries(r.targets.map((t) => [t.fieldName, t]));
     assert.equal(byField.a.kind, "accepted");
@@ -66,13 +66,13 @@ describe("subset-gate", () => {
   });
 
   it("attaches file path and line to rejection diagnostics", () => {
-    const { sites } = discover(
+    const { sites, checker } = discover(
       `interface Order { total: number }
        function f(): Order { return { total: "42" as any }; }`,
       "Order",
       ["total"],
     );
-    const r = gate(sites[0]);
+    const r = gate(sites[0], checker);
     if (r.targets[0].kind !== "rejected") {
       assert.fail("expected rejection");
     }

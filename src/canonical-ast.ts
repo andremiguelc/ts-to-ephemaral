@@ -1,1 +1,3 @@
-export type CAE = { kind: "Lit"; value: number };
+export type CAE =
+  | { kind: "Lit"; value: number }
+  | { kind: "FieldRef"; param: string; field: string };

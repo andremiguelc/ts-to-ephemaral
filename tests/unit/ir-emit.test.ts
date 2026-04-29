@@ -6,13 +6,13 @@ import { discover } from "./discovery/harness.js";
 
 describe("ir-emit", () => {
   it("emits a one-field AralFn for an accepted Lit site", () => {
-    const { sites } = discover(
+    const { sites, checker } = discover(
       `interface Order { total: number }
        function f(): Order { return { total: 42 }; }`,
       "Order",
       ["total"],
     );
-    const result = gate(sites[0]);
+    const result = gate(sites[0], checker);
     const fn = emitAralFn(result);
     assert.ok(fn);
     assert.equal(fn!.inputType, "Order");
@@ -24,25 +24,25 @@ describe("ir-emit", () => {
   });
 
   it("returns null when no targets accepted", () => {
-    const { sites } = discover(
+    const { sites, checker } = discover(
       `interface Order { total: number }
        function f(x: number): Order { return { total: x }; }`,
       "Order",
       ["total"],
     );
-    const result = gate(sites[0]);
+    const result = gate(sites[0], checker);
     const fn = emitAralFn(result);
     assert.equal(fn, null);
   });
 
   it("emits only the accepted targets when the site is partial", () => {
-    const { sites } = discover(
+    const { sites, checker } = discover(
       `interface Pair { a: number; b: number }
        function f(x: number): Pair { return { a: 7, b: x }; }`,
       "Pair",
       ["a", "b"],
     );
-    const result = gate(sites[0]);
+    const result = gate(sites[0], checker);
     const fn = emitAralFn(result);
     assert.ok(fn);
     assert.deepEqual(fn!.inputFields, ["a"]);
@@ -51,37 +51,37 @@ describe("ir-emit", () => {
   });
 
   it("synthesizes a name as <functionName>-<fieldName>", () => {
-    const { sites } = discover(
+    const { sites, checker } = discover(
       `interface Order { total: number }
        function f(): Order { return { total: 42 }; }`,
       "Order",
       ["total"],
     );
-    const fn = emitAralFn(gate(sites[0]));
+    const fn = emitAralFn(gate(sites[0], checker));
     assert.ok(fn);
     assert.equal(fn!.name, "f-total");
   });
 
   it("uses the const-bound name when the function is an arrow", () => {
-    const { sites } = discover(
+    const { sites, checker } = discover(
       `interface Order { total: number }
        const build = (): Order => ({ total: 42 });`,
       "Order",
       ["total"],
     );
-    const fn = emitAralFn(gate(sites[0]));
+    const fn = emitAralFn(gate(sites[0], checker));
     assert.ok(fn);
     assert.equal(fn!.name, "build-total");
   });
 
   it("falls back to anon-l<line> when no function name is available", () => {
-    const { sites } = discover(
+    const { sites, checker } = discover(
       `interface Order { total: number }
        export default (): Order => ({ total: 42 });`,
       "Order",
       ["total"],
     );
-    const fn = emitAralFn(gate(sites[0]));
+    const fn = emitAralFn(gate(sites[0], checker));
     assert.ok(fn);
     assert.match(fn!.name, /^anon-l\d+-total$/);
   });
