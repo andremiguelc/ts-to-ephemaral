@@ -54,20 +54,22 @@ describe("probes — first-milestone — bare primitive parameter reference", ()
 
   it("inner shadow: TypeChecker resolves to the inner const, not the outer parameter", () => {
     // The outer x is a parameter; the inner x is a const. The return is in the
-    // inner block, so the symbol resolves to the const — not a parameter — and
-    // param-ref misses, falling through to unsupported-expression.
-    assertRejected(
-      runProbe(
-        `interface Order { total: number }
-         function f(x: number): Order {
-           {
-             const x = 42;
-             return { total: x };
-           }
-         }`,
-      ),
-      "unsupported-expression",
+    // inner block, so the symbol resolves to the const — not a parameter. With
+    // const inlining in the dispatcher, the inner `const x = 42` admits as
+    // Lit(42), confirming that resolution went to the inner binding (a Lit),
+    // not the outer parameter (which would have produced ParamRef("x")).
+    const t = runProbe(
+      `interface Order { total: number }
+       function f(x: number): Order {
+         {
+           const x = 42;
+           return { total: x };
+         }
+       }`,
     );
+    assert.equal(t.kind, "accepted");
+    if (t.kind !== "accepted") return;
+    assert.deepEqual(t.cae, { kind: "Lit", value: 42 });
   });
 
   it("identifier resolving to a top-level function declaration misses (not a parameter)", () => {

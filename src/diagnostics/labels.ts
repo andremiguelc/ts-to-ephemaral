@@ -7,4 +7,5 @@ export type DiagnosticLabel =
   | "target-type-not-declared"
   | "any-typed-parameter"
   | "nullable-parameter"
-  | "param-not-primitive";
+  | "param-not-primitive"
+  | "reassignable-binding";

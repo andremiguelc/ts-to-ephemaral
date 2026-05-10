@@ -25,6 +25,8 @@ export const SUGGESTIONS: Record<DiagnosticLabel, SuggestionBuilder | null> = {
   "param-not-primitive": () =>
     `Reduce or project the parameter into a single \`number\` first, then ` +
     `assign that scalar.`,
+  "reassignable-binding": () =>
+    `Change \`let\` or \`var\` to \`const\` so the binding is single-assignment.`,
 };
 
 export function suggestionFor(
