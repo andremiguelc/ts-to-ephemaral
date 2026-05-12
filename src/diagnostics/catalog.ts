@@ -27,6 +27,8 @@ export const SUGGESTIONS: Record<DiagnosticLabel, SuggestionBuilder | null> = {
     `assign that scalar.`,
   "reassignable-binding": () =>
     `Change \`let\` or \`var\` to \`const\` so the binding is single-assignment.`,
+  "arith-on-string": null,
+  "unsupported-operator": null,
 };
 
 export function suggestionFor(

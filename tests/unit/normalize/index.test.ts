@@ -67,10 +67,10 @@ describe("normalize/index — dispatcher", () => {
     assert.deepEqual(r.cae, { kind: "ParamRef", name: "x" });
   });
 
-  it("rejects a binary expression with unsupported-expression", () => {
+  it("rejects a not-yet-admitted binary expression (comparison) with unsupported-expression", () => {
     const expr = expressionInsideFirstObjectLiteral(
       `interface Order { total: number }
-       function f(): Order { return { total: 1 + 1 }; }`,
+       function f(): Order { return { total: (1 < 2) as any }; }`,
       "total",
     );
     const r = normalize(expr, stubCtx());

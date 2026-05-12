@@ -8,4 +8,6 @@ export type DiagnosticLabel =
   | "any-typed-parameter"
   | "nullable-parameter"
   | "param-not-primitive"
-  | "reassignable-binding";
+  | "reassignable-binding"
+  | "arith-on-string"
+  | "unsupported-operator";

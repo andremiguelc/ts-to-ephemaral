@@ -19,10 +19,10 @@ describe("subset-gate", () => {
     assert.deepEqual(r.targets[0].cae, { kind: "Lit", value: 42 });
   });
 
-  it("rejects a target whose expression is not yet admitted (binary expression)", () => {
+  it("rejects a target whose expression is not yet admitted (comparison)", () => {
     const { sites, checker } = discover(
       `interface Order { total: number }
-       function f(): Order { return { total: 1 + 1 }; }`,
+       function f(): Order { return { total: (1 < 2) as any }; }`,
       "Order",
       ["total"],
     );

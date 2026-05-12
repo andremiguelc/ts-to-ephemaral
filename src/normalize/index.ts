@@ -7,6 +7,7 @@ import { recognizeLiteral } from "./recognize-literal.js";
 import { recognizeFieldRef } from "./recognize-field-ref.js";
 import { recognizeParamRef } from "./recognize-param-ref.js";
 import { recognizeInlineConst } from "./inline-consts.js";
+import { recognizeArith } from "./recognize-arith.js";
 
 export interface NormalizeContext {
   checker: ts.TypeChecker;
@@ -35,6 +36,9 @@ export function normalize(
 
   const inlineConst = recognizeInlineConst(stripped, ctx);
   if (inlineConst.kind !== "miss") return inlineConst;
+
+  const arith = recognizeArith(stripped, ctx);
+  if (arith.kind !== "miss") return arith;
 
   return {
     kind: "rejected",

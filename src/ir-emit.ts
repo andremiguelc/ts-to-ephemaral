@@ -35,23 +35,55 @@ export function caeToExpr(cae: CAE): Expr {
       return { field: { name: cae.field } };
     case "ParamRef":
       return { field: { name: cae.name } };
+    case "Arith":
+      return {
+        arith: {
+          op: cae.op,
+          left: caeToExpr(cae.left),
+          right: caeToExpr(cae.right),
+        },
+      };
   }
 }
 
 function collectReferencedFields(caes: CAE[]): string[] {
   const fields: string[] = [];
-  for (const cae of caes) {
-    if (cae.kind === "FieldRef") fields.push(cae.field);
-  }
+  for (const cae of caes) walkForFields(cae, fields);
   return fields;
+}
+
+function walkForFields(cae: CAE, into: string[]): void {
+  switch (cae.kind) {
+    case "FieldRef":
+      into.push(cae.field);
+      return;
+    case "Arith":
+      walkForFields(cae.left, into);
+      walkForFields(cae.right, into);
+      return;
+    default:
+      return;
+  }
 }
 
 function collectParamNames(caes: CAE[]): string[] {
   const names: string[] = [];
-  for (const cae of caes) {
-    if (cae.kind === "ParamRef") names.push(cae.name);
-  }
+  for (const cae of caes) walkForParams(cae, names);
   return names;
+}
+
+function walkForParams(cae: CAE, into: string[]): void {
+  switch (cae.kind) {
+    case "ParamRef":
+      into.push(cae.name);
+      return;
+    case "Arith":
+      walkForParams(cae.left, into);
+      walkForParams(cae.right, into);
+      return;
+    default:
+      return;
+  }
 }
 
 function uniq(items: string[]): string[] {
