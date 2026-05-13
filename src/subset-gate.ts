@@ -1,5 +1,5 @@
 import ts from "typescript";
-import type { CAE } from "./canonical-ast.js";
+import type { CAE, Predicate } from "./canonical-ast.js";
 import type { Diagnostic, DiscoveredSite, SiteTarget } from "./types.js";
 import { suggestionFor } from "./diagnostics/catalog.js";
 import { normalize, type NormalizeContext } from "./normalize/index.js";
@@ -13,6 +13,9 @@ export interface SiteGateResult {
   site: DiscoveredSite;
   targets: TargetResult[];
   warnings: Diagnostic[];
+  // Per-parameter predicates extracted from accepted Assert calls.
+  // Empty when no Assert was recognized for any parameter at this site.
+  paramAsserts: Map<string, Predicate[]>;
 }
 
 export function gate(
@@ -25,8 +28,8 @@ export function gate(
     signature: site.signature,
   };
   const targets = site.targets.map((t) => gateTarget(site, ctx, t));
-  const warnings = checkConstraints(site, targets, ctx);
-  return { site, targets, warnings };
+  const { warnings, paramAsserts } = checkConstraints(site, targets, ctx);
+  return { site, targets, warnings, paramAsserts };
 }
 
 function gateTarget(

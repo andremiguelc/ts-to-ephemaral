@@ -1,7 +1,7 @@
 import type ts from "typescript";
 import type { DiagnosticLabel } from "./diagnostics/labels.js";
 
-export const ARAL_FN_VERSION = "0.1.2";
+export const ARAL_FN_VERSION = "0.1.5";
 
 export type ArithOp = "add" | "sub" | "mul" | "div";
 export type CompOp = "eq" | "neq" | "gt" | "lt" | "gte" | "lte";
@@ -41,6 +41,7 @@ export interface AralFn {
   assigns: FieldAssign[];
   typedParams?: Array<{ name: string; type: string }>;
   optionalFields?: string[];
+  paramPreconditions?: Array<{ name: string; predicates: BoolExpr[] }>;
 }
 
 export interface ResolvedTargetType {

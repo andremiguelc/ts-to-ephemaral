@@ -8,7 +8,7 @@
   "bin": {
     "ts-to-ephemaral": "src/extract.ts"
   },
-  "aralFnVersion": "0.1.2",
+  "aralFnVersion": "0.1.5",
   "scripts": {
     "extract": "npx tsx src/extract.ts",
     "test:unit": "npx tsx --test 'tests/unit/**/*.test.ts'",

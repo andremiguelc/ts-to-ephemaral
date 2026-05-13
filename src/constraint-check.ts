@@ -1,17 +1,28 @@
 import ts from "typescript";
-import type { CAE } from "./canonical-ast.js";
+import type { CAE, Predicate } from "./canonical-ast.js";
 import { suggestionFor } from "./diagnostics/catalog.js";
 import type { NormalizeContext } from "./normalize/index.js";
 import { recognizeAssert } from "./normalize/recognize-assert.js";
 import type { TargetResult } from "./subset-gate.js";
 import type { Diagnostic, DiscoveredSite } from "./types.js";
 
+export interface ConstraintCheckResult {
+  warnings: Diagnostic[];
+  // Per-parameter list of predicates the parser confirmed via Assert lookback.
+  // Each entry is one accepted Assert call; multiple entries are conjunctive.
+  paramAsserts: Map<string, Predicate[]>;
+}
+
 export function checkConstraints(
   site: DiscoveredSite,
   targets: TargetResult[],
   ctx: NormalizeContext,
-): Diagnostic[] {
+): ConstraintCheckResult {
   const warnings: Diagnostic[] = [];
+  const paramAsserts = new Map<string, Predicate[]>();
+  // Track which params already had an accepted Assert recorded for THIS site,
+  // so a single Assert backing multiple targets doesn't duplicate predicates.
+  const recorded = new Set<string>();
 
   for (const target of targets) {
     if (target.kind !== "accepted") continue;
@@ -50,7 +61,13 @@ export function checkConstraints(
         const callExpr = (lookback as ts.ExpressionStatement).expression as ts.CallExpression;
         const recognized = recognizeAssert(callExpr, ctx);
         if (recognized.kind === "accepted" && recognized.argName === p) {
-          // Constrained by this assert — predicate held in-memory, no diagnostic.
+          // Constrained — record the predicate so ir-emit can ship it to the verifier.
+          if (!recorded.has(p)) {
+            const list = paramAsserts.get(p) ?? [];
+            list.push(recognized.predicate);
+            paramAsserts.set(p, list);
+            recorded.add(p);
+          }
           continue;
         }
         if (recognized.kind === "malformed") {
@@ -84,7 +101,7 @@ export function checkConstraints(
     }
   }
 
-  return warnings;
+  return { warnings, paramAsserts };
 }
 
 function collectParamNames(cae: CAE): Set<string> {

@@ -98,4 +98,48 @@ describe("ir-emit", () => {
     assert.ok(fn);
     assert.match(fn!.name, /^anon-l\d+-total$/);
   });
+
+  it("emits paramPreconditions when an Assert is recognized for a used param", () => {
+    const { sites, checker } = discover(
+      `interface Order { total: number }
+       function totalAssert(t: number) {
+         if (t < 0) { throw new Error("must be non-negative"); }
+       }
+       function f(newTotal: number): Order {
+         totalAssert(newTotal);
+         return { total: newTotal };
+       }`,
+      "Order",
+      ["total"],
+    );
+    const fn = emitAralFn(gate(sites[0], checker));
+    assert.ok(fn);
+    assert.ok(fn!.paramPreconditions);
+    assert.equal(fn!.paramPreconditions!.length, 1);
+    const pp = fn!.paramPreconditions![0];
+    assert.equal(pp.name, "newTotal");
+    assert.equal(pp.predicates.length, 1);
+    // The if-condition is `t < 0` (the throw shape). The precondition the
+    // verifier asserts is its negation — `not (t < 0)` — i.e. `t >= 0` for
+    // every caller that reaches the assignment.
+    assert.deepEqual(pp.predicates[0], {
+      not: {
+        cmp: { op: "lt", left: { field: { name: "newTotal" } }, right: { lit: 0 } },
+      },
+    });
+  });
+
+  it("omits paramPreconditions when no Assert is recognized", () => {
+    const { sites, checker } = discover(
+      `interface Order { total: number }
+       function f(newTotal: number): Order {
+         return { total: newTotal };
+       }`,
+      "Order",
+      ["total"],
+    );
+    const fn = emitAralFn(gate(sites[0], checker));
+    assert.ok(fn);
+    assert.equal(fn!.paramPreconditions, undefined);
+  });
 });
