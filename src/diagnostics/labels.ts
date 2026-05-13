@@ -10,4 +10,11 @@ export type DiagnosticLabel =
   | "param-not-primitive"
   | "reassignable-binding"
   | "arith-on-string"
-  | "unsupported-operator";
+  | "unsupported-operator"
+  | "cmp-mixed-types"
+  | "cmp-non-numeric"
+  | "instanceof-operator"
+  | "in-operator"
+  | "missing-assert"
+  | "malformed-assert"
+  | "misplaced-assert";

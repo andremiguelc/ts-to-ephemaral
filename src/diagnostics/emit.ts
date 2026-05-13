@@ -6,5 +6,10 @@ export function emit(diagnostic: Diagnostic): string {
       ? `${diagnostic.filePath}:${diagnostic.line} `
       : "";
   const head = `${prefix}[${diagnostic.label}] ${diagnostic.message}`;
-  return diagnostic.suggestion ? `${head}\n  ${diagnostic.suggestion}` : head;
+  if (!diagnostic.suggestion) return head;
+  const indented = diagnostic.suggestion
+    .split("\n")
+    .map((line) => `  ${line}`)
+    .join("\n");
+  return `${head}\n${indented}`;
 }

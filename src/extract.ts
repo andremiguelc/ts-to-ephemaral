@@ -131,6 +131,7 @@ for (const site of result.sites) {
   for (const t of gated.targets) {
     if (t.kind === "rejected") diagnostics.push(t.diagnostic);
   }
+  diagnostics.push(...gated.warnings);
   const aralFn = emitAralFn(gated);
   if (aralFn) {
     const outPath = writeAralFn(

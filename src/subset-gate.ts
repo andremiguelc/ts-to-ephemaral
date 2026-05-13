@@ -3,6 +3,7 @@ import type { CAE } from "./canonical-ast.js";
 import type { Diagnostic, DiscoveredSite, SiteTarget } from "./types.js";
 import { suggestionFor } from "./diagnostics/catalog.js";
 import { normalize, type NormalizeContext } from "./normalize/index.js";
+import { checkConstraints } from "./constraint-check.js";
 
 export type TargetResult =
   | { kind: "accepted"; fieldName: string; cae: CAE }
@@ -11,6 +12,7 @@ export type TargetResult =
 export interface SiteGateResult {
   site: DiscoveredSite;
   targets: TargetResult[];
+  warnings: Diagnostic[];
 }
 
 export function gate(
@@ -23,7 +25,8 @@ export function gate(
     signature: site.signature,
   };
   const targets = site.targets.map((t) => gateTarget(site, ctx, t));
-  return { site, targets };
+  const warnings = checkConstraints(site, targets, ctx);
+  return { site, targets, warnings };
 }
 
 function gateTarget(
